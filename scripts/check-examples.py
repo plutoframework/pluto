@@ -43,3 +43,23 @@ with tempfile.TemporaryDirectory(prefix='pluto-readme-js-') as directory:
     result = subprocess.run(['node', 'action.mjs'], cwd=path, check=True, capture_output=True, text=True)
     assert result.stdout.strip() == 'pending: two\nrejected: one, two', result
 print('PASS: frontend published-package snippet')
+
+# Compile the live-provider README unchanged; exercise its adapter locally.
+agent_root = ROOT.parent / 'pluto-agent'
+if not (agent_root / 'examples/summary/main_test.go').exists():
+    agent_root = ROOT.parent / 'pluto-agent-readme'
+source = re.search(r'```go\n(.*?)\n```', (agent_root / 'README.md').read_text(), re.S)[1]
+with tempfile.TemporaryDirectory(prefix='pluto-readme-agent-') as directory:
+    path = Path(directory)
+    env = {**os.environ, 'GOWORK': 'off'}
+    def run(*args):
+        return subprocess.run(args, cwd=path, env=env, check=True,
+                              capture_output=True, text=True, timeout=120)
+    run('go', 'mod', 'init', 'example.com/agent-readme-check')
+    run('go', 'get', 'github.com/plutoframework/pluto-agent@v0.1.3')
+    (path / 'main.go').write_text(source + '\n')
+    (path / 'main_test.go').write_text(
+        (agent_root / 'examples/summary/main_test.go').read_text())
+    run('go', 'build', '.')
+    run('go', 'test', '-race', '.')
+print('PASS: agent published-package snippet, controlled HTTP, no live call')
