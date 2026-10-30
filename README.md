@@ -19,7 +19,7 @@ libraries and secure defaults give your application a consistent starting point.
 Go **1.25.5+** and Git are required:
 
 ```sh
-go install github.com/plutoframework/cli/cmd/pluto@v0.13.0
+go install github.com/plutoframework/cli/cmd/pluto@v0.14.0
 ```
 
 ### 2. Create and run

@@ -9,7 +9,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 checks = [
     ('pluto-core', 'github.com/plutoframework/pluto-core@v0.4.0', 'first: purchase-01 purchase-03\nsecond: purchase-04 purchase-06\nmore: false'),
-    ('pluto-auth', 'github.com/plutoframework/pluto-auth@v0.3.0', 'anonymous: 401\nauthenticated: 200\nrevoked: 401'),
+    ('pluto-auth', 'github.com/plutoframework/pluto-auth@v0.4.0', 'anonymous: 401\nauthenticated: 200\nrevoked: 401'),
     ('pluto-rbac', 'github.com/plutoframework/pluto-rbac@v0.1.0', 'colleague allowed: true\nself approval allowed: false\nanother tenant allowed: false'),
 ]
 
