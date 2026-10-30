@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="260" viewBox="0 0 1200 260" role="img" aria-labelledby="title desc">
+<title id="title">Pluto</title><desc id="desc">A small framework. Wide open possibilities. An orbital illustration in warm paper, ink blue and signal orange.</desc>
+<rect width="1200" height="260" rx="16" fill="#f4f2e9"/>
+<g stroke="#cdd0c6" stroke-width="1" opacity=".6"><path d="M0 65h1200M0 195h1200M750 0v260M1050 0v260"/></g>
+<text x="55" y="112" font-family="Georgia,serif" font-size="78" font-weight="700" fill="#172e3b">pluto.</text>
+<text x="59" y="168" font-family="Verdana,sans-serif" font-size="22" fill="#546168">A small framework. Wide open possibilities.</text>
+<g transform="translate(965 129)"><ellipse rx="174" ry="52" transform="rotate(-28)" fill="none" stroke="#172e3b" stroke-width="1.5"/><circle r="70" fill="#172e3b"/><path d="M-54-45a70 70 0 0 1 91 99A70 70 0 0 0-54-45" fill="#304653"/><ellipse rx="174" ry="52" transform="rotate(-28)" fill="none" stroke="#ed7849" stroke-width="2" stroke-dasharray="280 460"/><circle cx="143" cy="-76" r="7" fill="#be4323"/><circle cx="-145" cy="74" r="3" fill="#172e3b"/></g>
+<path d="M57 219h320" stroke="#be4323" stroke-width="3"/>
+</svg>

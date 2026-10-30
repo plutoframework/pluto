@@ -1,0 +1,27 @@
+[
+  {
+    "command": "pluto version",
+    "output": "pluto 0.13.0",
+    "seconds": 0.05
+  },
+  {
+    "command": "pluto --no-input init orbit \\\n  --module example.com/orbit --env-prefix ORBIT_ \\\n  --no-docker --no-mise --no-fnox",
+    "output": "Created orbit in ./orbit (single tenancy).\nNext: go run ./cmd/openapi; pluto fmt; pluto vet; go run ./cmd/api",
+    "seconds": 1.0
+  },
+  {
+    "command": "cd orbit",
+    "output": "",
+    "seconds": 0
+  },
+  {
+    "command": "ORBIT_SERVER_ADDRESS=127.0.0.1:62046 go run ./cmd/api &",
+    "output": "",
+    "seconds": 2.09
+  },
+  {
+    "command": "curl -fsS -w \"\\nHTTP %{http_code}\\n\" http://127.0.0.1:62046/healthz",
+    "output": "{\"data\":\"ok\"}\n\nHTTP 200",
+    "seconds": 0.05
+  }
+]

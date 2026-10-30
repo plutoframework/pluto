@@ -1,29 +1,88 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/plutoframework/pluto/main/assets/readme/banner.svg" alt="Pluto — a small framework, wide open possibilities" width="100%" />
+</p>
+
 # Pluto
 
-An opinionated Go framework for building APIs quickly, with explicit project
-structure, readable code, secure defaults and a small dependency surface.
+A small framework. Wide open possibilities.
 
-The framework is in its design/prototype stage. This module reserves
-`github.com/plutoframework/pluto`; it does not export a framework runtime yet.
-Current HTTP and application primitives live in the example and CLI templates
-while their ergonomics are reviewed.
+Build explicit Go APIs quickly, add the frontend you prefer, and keep the
+structure clear for people and agents. Opinionated scaffolding, focused runtime
+libraries and secure defaults give your application a consistent starting point.
 
-Related projects:
+[Website](https://plutoframework.github.io/pluto-site/) · [Documentation](https://plutoframework.github.io/pluto-site/docs/index/) · [CLI demo](https://github.com/plutoframework/pluto/blob/main/docs/DEMO.md) · [First issues](https://github.com/plutoframework/pluto/blob/main/CONTRIBUTING.md#starter-tasks)
 
-- [CLI](https://github.com/plutoframework/cli): Cobra-based project and endpoint
-  scaffolding, formatting, validation and optional development tooling.
-- [Example API](https://github.com/plutoframework/pluto-example): a purchasing API
-  demonstrating handlers, operations, tenant isolation, flags and audit events.
-- [RBAC](https://github.com/plutoframework/pluto-rbac): standalone roles,
-  permissions, inheritance and explicitly scoped assignment resolution.
+## From an empty folder to an API
 
-The intended framework uses Chi/net/http, typed configuration, explicit
-dependency injection, consistent JSON responses and an OpenAPI contract. The
-initial database direction is PostgreSQL with pgx and sqlc. Runtime dependencies
-remain small and reviewed; generated application code remains editable.
+### 1. Install the CLI
 
-Requires Go 1.25.5+ to build the placeholder module:
+Go **1.25.5+** and Git are required:
 
 ```sh
-go test ./...
+go install github.com/plutoframework/cli/cmd/pluto@v0.13.0
 ```
+
+### 2. Create and run
+
+```sh
+pluto --no-input init orbit --module example.com/orbit --env-prefix ORBIT_
+cd orbit
+go run ./cmd/api
+```
+
+### 3. Call a working endpoint
+
+```sh
+curl -fsS http://127.0.0.1:8080/healthz
+```
+
+The response is `{"data":"ok"}`. The generated API is running. Business routes
+remain intentionally unimplemented until you add operations, authorization and tests.
+
+[![Real Pluto CLI walkthrough: scaffold an API, start it and call its health endpoint](https://raw.githubusercontent.com/plutoframework/pluto/main/assets/readme/demo.gif)](docs/DEMO.md)
+
+[Text transcript](docs/DEMO.md) · [Static image](assets/readme/demo.png) · [Step-by-step guide](https://plutoframework.github.io/pluto-site/docs/getting-started/)
+
+## The ecosystem
+
+| Project                                                      | Responsibility                                             |
+| ------------------------------------------------------------ | ---------------------------------------------------------- |
+| [CLI](https://github.com/plutoframework/cli)                 | Scaffolds, terminal wizard, formatting, checks and OpenAPI |
+| [Core](https://github.com/plutoframework/pluto-core)         | Pagination, idempotency, cache, flags and business state   |
+| [Auth](https://github.com/plutoframework/pluto-auth)         | Sessions and optional local credential lifecycle           |
+| [RBAC](https://github.com/plutoframework/pluto-rbac)         | Named roles, capabilities and scoped assignments           |
+| [Jobs](https://github.com/plutoframework/pluto-jobs)         | Durable workers and transactional PostgreSQL outbox        |
+| [Agent](https://github.com/plutoframework/pluto-agent)       | Typed AI runs and explicitly authorized tools              |
+| [Frontend](https://github.com/plutoframework/pluto-frontend) | Typed UI state and responsive actions                      |
+| [Example](https://github.com/plutoframework/pluto-example)   | A full-stack purchasing application                        |
+| [Skills](https://github.com/plutoframework/pluto-skills)     | Short, installable guidance for coding agents              |
+| [Site](https://github.com/plutoframework/pluto-site)         | Product site, Starlight docs and Markdown exports          |
+
+This repository is the ecosystem entrypoint. The Go module
+`github.com/plutoframework/pluto` is reserved; it does not export a framework
+runtime. Start with the CLI and the focused packages above.
+
+## Our conventions
+
+- Explicit routes, thin handlers and testable application operations.
+- Standard Go first; reviewed dependencies stay at deliberate integration boundaries.
+- PostgreSQL, pgx and sqlc; explicit migrations and transaction ownership.
+- Default-off staged capabilities, server-owned authority and scoped data access.
+- Readable 80-column formatting, bounded source files and canonical checks.
+- Immediate UI feedback, explicit optimism and honest handling of uncertain writes.
+
+## Build with an agent
+
+```sh
+npx skills add plutoframework/pluto-skills
+```
+
+Choose only the guidance needed. Agents can fetch individual topics from the
+[Markdown documentation index](https://plutoframework.github.io/pluto-site/docs/llms.txt).
+
+## Contribute
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md), find a [good first issue](https://github.com/plutoframework/pluto/blob/main/CONTRIBUTING.md#starter-tasks),
+or follow the linked package repository for implementation work. Pluto is an
+evolving framework preview; operational requirements and limits are documented
+per package. No independent security audit is claimed.
