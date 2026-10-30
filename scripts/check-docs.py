@@ -4,6 +4,7 @@ from urllib.parse import unquote, urlsplit
 import argparse
 import re
 import subprocess
+import textwrap
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +37,29 @@ for root in roots:
     for document in files:
         assert document.is_file(), document
         body = re.sub(r'^```.*?^```[^\n]*$', '', document.read_text(), flags=re.M | re.S)
+        examples = re.findall(
+            r'<!-- example-source: ([^\n]+) -->\s*```[^\n]*\n(.*?)\n```\s*<!-- /example-source -->',
+            document.read_text(), re.S,
+        )
+        assert len(examples) == document.read_text().count('<!-- example-source:'), f'Malformed example marker: {document}'
+        for source, snippet in examples:
+            original = (root / source).resolve()
+            assert original.is_relative_to(root.resolve()), (document, source)
+            assert original.is_file(), (document, source)
+            assert snippet.strip() == original.read_text().strip(), f'Example drift: {document}: {source}'
+        excerpts = re.findall(
+            r'<!-- example-excerpt: ([^\n]+):([a-z_]+) -->\s*```go\n(.*?)\n```\s*<!-- /example-excerpt -->',
+            document.read_text(), re.S,
+        )
+        assert len(excerpts) == document.read_text().count('<!-- example-excerpt:'), f'Malformed excerpt marker: {document}'
+        for source, symbol, snippet in excerpts:
+            source_path = (root / source).resolve()
+            assert source_path.is_relative_to(root.resolve()), (document, source)
+            original = source_path.read_text()
+            start = original.index('\t' + symbol + ', err :=')
+            end = original.index('\n\tif err != nil', start)
+            expected = textwrap.dedent(original[start:end]).strip()
+            assert snippet.strip() == expected, f'Excerpt drift: {document}: {source}'
         links = re.findall(r'\]\(([^\s)]+)\)', body)
         links += re.findall(r'(?:src|href)="([^"]+)"', body)
         for link in links:

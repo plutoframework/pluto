@@ -1,0 +1,42 @@
+name: Check ecosystem README examples
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: pluto
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.5"
+          cache: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24.22.1"
+          package-manager-cache: false
+      - name: Check out public documentation sources
+        run: |
+          git clone --depth 1 https://github.com/plutoframework/cli pluto-cli
+          for task_repo in pluto-core pluto-auth pluto-rbac pluto-jobs pluto-agent pluto-frontend pluto-example pluto-skills pluto-site; do
+            git clone --depth 1 "https://github.com/plutoframework/$task_repo" "$task_repo"
+          done
+      - name: Check links and source-backed snippets
+        working-directory: pluto
+        run: >-
+          python3 scripts/check-docs.py
+          --repo-dir ../pluto-cli --repo-dir ../pluto-core
+          --repo-dir ../pluto-auth --repo-dir ../pluto-rbac
+          --repo-dir ../pluto-jobs --repo-dir ../pluto-agent
+          --repo-dir ../pluto-frontend --repo-dir ../pluto-example
+          --repo-dir ../pluto-skills --repo-dir ../pluto-site
+      - name: Execute copyable examples against published packages
+        working-directory: pluto
+        run: python3 scripts/check-examples.py

@@ -8,9 +8,9 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 checks = [
-    ('pluto-core', 'github.com/plutoframework/pluto-core@v0.4.0', '10'),
-    ('pluto-auth', 'github.com/plutoframework/pluto-auth@v0.3.0', 'Session manager ready'),
-    ('pluto-jobs', 'github.com/plutoframework/pluto-jobs@v0.1.1', 'purchase.submitted'),
+    ('pluto-core', 'github.com/plutoframework/pluto-core@v0.4.0', 'first: purchase-01 purchase-03\nsecond: purchase-04 purchase-06\nmore: false'),
+    ('pluto-auth', 'github.com/plutoframework/pluto-auth@v0.3.0', 'anonymous: 401\nauthenticated: 200\nrevoked: 401'),
+    ('pluto-rbac', 'github.com/plutoframework/pluto-rbac@v0.1.0', 'colleague allowed: true\nself approval allowed: false\nanother tenant allowed: false'),
 ]
 
 
@@ -41,5 +41,5 @@ with tempfile.TemporaryDirectory(prefix='pluto-readme-js-') as directory:
     subprocess.run(['npm', 'install', '--ignore-scripts', '--no-audit', '--no-fund', '@plutoframework/frontend@0.2.1'], cwd=path, check=True, capture_output=True, timeout=120)
     (path / 'action.mjs').write_text(source + '\n')
     result = subprocess.run(['node', 'action.mjs'], cwd=path, check=True, capture_output=True, text=True)
-    assert result.stdout.strip() == 'succeeded', result
+    assert result.stdout.strip() == 'pending: two\nrejected: one, two', result
 print('PASS: frontend published-package snippet')

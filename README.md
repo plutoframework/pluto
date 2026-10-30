@@ -41,7 +41,7 @@ remain intentionally unimplemented until you add operations, authorization and t
 
 [![Real Pluto CLI walkthrough: scaffold an API, start it and call its health endpoint](https://raw.githubusercontent.com/plutoframework/pluto/main/assets/readme/demo.gif)](docs/DEMO.md)
 
-[Text transcript](docs/DEMO.md) · [Static image](assets/readme/demo.png) · [Step-by-step guide](https://plutoframework.github.io/pluto-site/docs/getting-started/)
+[Text transcript](docs/DEMO.md) · [Static image](assets/readme/demo.png) · [Step-by-step guide](https://plutoframework.github.io/pluto-site/docs/getting-started/) · [Worked examples](https://plutoframework.github.io/pluto-site/docs/examples/)
 
 ## The ecosystem
 

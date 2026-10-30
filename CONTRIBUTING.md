@@ -48,7 +48,19 @@ including sensitive details. Publishing a patch is not an independent audit.
 ## Starter tasks
 
 - [Pass AbortSignal to generated form submit callbacks](https://github.com/plutoframework/cli/issues/1)
-- [Add a runnable optimistic list-removal example](https://github.com/plutoframework/pluto-frontend/issues/1)
-- [Add an executable bounded-pagination example](https://github.com/plutoframework/pluto-core/issues/1)
 - [Add a role-catalog JSON example for administration UIs](https://github.com/plutoframework/pluto-rbac/issues/1)
 - [Write a task-first troubleshooting page for local setup](https://github.com/plutoframework/pluto-site/issues/1)
+
+## Keep examples executable
+
+The ecosystem README workflow clones public sources, checks source-backed snippet
+markers and runs complete examples against published package pins. For local
+checks, pass sibling repositories with `scripts/check-docs.py --repo-dir ../NAME`.
+Use `mise exec node@24.22.1 -- python3 scripts/check-examples.py` to execute the
+copyable Go and JavaScript programs. Database, generated-route and agent examples
+have their own documented walkthroughs; do not pretend a source-link check runs them.
+
+## Completed starter examples
+
+- [Scoped pagination](https://github.com/plutoframework/pluto-core/tree/main/examples/pagination) completed the pagination starter task.
+- [Optimistic list actions](https://github.com/plutoframework/pluto-frontend/tree/main/examples/actions) completed the frontend starter task.
