@@ -10,7 +10,7 @@ Build explicit Go APIs quickly, add the frontend you prefer, and keep the
 structure clear for people and agents. Opinionated scaffolding, focused runtime
 libraries and secure defaults give your application a consistent starting point.
 
-[Website](https://plutoframework.github.io/pluto-site/) · [Documentation](https://plutoframework.github.io/pluto-site/docs/index/) · [CLI demo](https://github.com/plutoframework/pluto/blob/main/docs/DEMO.md) · [First issues](https://github.com/plutoframework/pluto/blob/main/CONTRIBUTING.md#starter-tasks)
+[Roadmap](docs/ROADMAP.md) · [Website](https://plutoframework.github.io/pluto-site/) · [Documentation](https://plutoframework.github.io/pluto-site/docs/index/) · [CLI demo](https://github.com/plutoframework/pluto/blob/main/docs/DEMO.md) · [First issues](https://github.com/plutoframework/pluto/blob/main/CONTRIBUTING.md#starter-tasks)
 
 ## From an empty folder to an API
 

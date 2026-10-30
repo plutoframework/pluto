@@ -32,7 +32,7 @@ def headings(path):
 count = 0
 for root in roots:
     files = [root / 'README.md', root / 'CONTRIBUTING.md']
-    for name in ('docs/REFERENCE.md', 'docs/MAINTAINING.md', 'docs/DEMO.md'):
+    for name in ('docs/REFERENCE.md', 'docs/MAINTAINING.md', 'docs/DEMO.md', 'docs/ROADMAP.md'):
         if (root / name).exists(): files.append(root / name)
     for document in files:
         assert document.is_file(), document
