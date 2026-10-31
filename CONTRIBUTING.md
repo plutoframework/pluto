@@ -32,6 +32,23 @@ for the behavior changed. Real-service checks require isolated services; a skip 
 not a pass. For docs-only changes, check links and execute changed examples. Never
 suppress checks to hide a failure; report missing prerequisites and untested edges.
 
+## Library maintainer tooling
+
+The Core, Auth, RBAC, Jobs, Agent and Frontend repositories expose the same
+Make targets. Run them inside the library checkout:
+
+```sh
+make fmt    # apply the configured formatting
+make vet    # check formatting, lint and build without fixes
+make check  # standard checks and tests
+make test   # tests only
+```
+
+These delegate to each library's existing scripts, including checks for optional
+Go modules. They do not require an application manifest. `pluto fmt` and
+`pluto vet` remain application commands. See each library's `CONTRIBUTING.md`
+for prerequisites and additional fuzz, mutation and service integration checks.
+
 ## Send a focused contribution
 
 Explain the problem, resulting behavior, validation and any compatibility or
