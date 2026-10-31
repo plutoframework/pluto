@@ -1,18 +1,4 @@
-name: Pluto shared PR review
-on:
-  workflow_call:
-    inputs:
-      policy_revision:
-        type: string
-        required: true
-    secrets:
-      GPUROUTER_API_KEY:
-        required: false
-      PLUTO_REVIEW_APP_PRIVATE_KEY:
-        required: false
-permissions:
-  contents: read
-jobs:
+# Source template for rollout.py; not executed as a standalone workflow.
   review:
     if: >-
       github.event_name != 'workflow_run' ||
