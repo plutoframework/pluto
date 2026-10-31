@@ -159,7 +159,7 @@ on:
   workflow_dispatch:
     inputs:
       head:
-        description: Existing branch to propose against main
+        description: Source branch containing current main; App publishes review/<branch>
         required: true
         type: string
       title:
@@ -186,7 +186,7 @@ jobs:
           private-key: ${{{{ secrets.PLUTO_REVIEW_APP_PRIVATE_KEY }}}}
           owner: ${{{{ github.repository_owner }}}}
           repositories: ${{{{ github.event.repository.name }}}}
-      - name: Open PR as the App
+      - name: Publish the proposal and open PR as the App
         env:
           BOT_TOKEN: ${{{{ steps.app.outputs.token }}}}
           TARGET_REPOSITORY: ${{{{ github.repository }}}}

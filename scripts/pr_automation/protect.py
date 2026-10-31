@@ -21,7 +21,7 @@ def apply(repository, app_id):
             "dismiss_stale_reviews": True,
             "require_code_owner_reviews": True,
             "required_approving_review_count": 1,
-            "require_last_push_approval": False,
+            "require_last_push_approval": True,
         },
         "restrictions": None,
         "required_conversation_resolution": True,

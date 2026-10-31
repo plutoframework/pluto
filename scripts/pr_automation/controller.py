@@ -272,7 +272,7 @@ def process(api, repository, number, fresh=False):
             else "routine change qualifies for automatic approval."
         ),
     )
-    if not any(
+    if pr["user"]["login"] != os.environ["BOT_LOGIN"] and not any(
         r["state"] == "APPROVED"
         and r.get("commit_id") == head
         and r["user"]["login"] == os.environ["BOT_LOGIN"]

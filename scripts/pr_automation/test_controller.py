@@ -53,6 +53,8 @@ class FakeAPI:
             self.checks.append(data)
             return {"id": len(self.checks)}
         if path.endswith("/reviews"):
+            if self.pr["user"]["login"] == "bot":
+                raise AssertionError("The App cannot approve its own PR")
             self.reviews.append(
                 {
                     "id": 10,
@@ -172,6 +174,27 @@ class ControllerTests(unittest.TestCase):
         self.run_gate()
         self.assertFalse(self.api.merged)
         self.assertFalse(self.api.auto_enabled)
+
+    def test_app_submission_merges_with_independent_approval(self):
+        self.api.pr["user"]["login"] = "bot"
+        self.api.reviews = [
+            {
+                "id": 1,
+                "user": {"login": "owner", "type": "User"},
+                "state": "APPROVED",
+                "commit_id": "head",
+            }
+        ]
+        self.run_gate()
+        self.assertTrue(self.api.merged)
+        self.assertEqual(len(self.api.reviews), 1)
+
+    def test_app_submission_without_independent_approval_stays_blocked(self):
+        self.api.pr["user"]["login"] = "bot"
+        self.run_gate()
+        self.assertFalse(self.api.merged)
+        self.assertFalse(self.api.auto_enabled)
+        self.assertEqual(self.api.reviews, [])
 
     def test_failed_ci_or_review_does_not_merge(self):
         self.api.runs_succeed = False
