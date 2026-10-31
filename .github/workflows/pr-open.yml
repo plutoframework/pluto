@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: plutoframework/pluto
-          ref: 04d29db0d4d76c262853c8af3c6163a3f08c0fec
+          ref: f65f6b73694e149f1810195bbb5a5e1613cba382
           path: policy
           persist-credentials: false
       - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
