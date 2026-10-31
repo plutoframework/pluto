@@ -42,6 +42,10 @@ on:
         description: Pull request to reevaluate
         required: true
         type: string
+      retry_review:
+        description: Run the model again for this revision (uses review tokens)
+        type: boolean
+        default: false
 permissions:
   contents: read
 concurrency:
@@ -153,56 +157,13 @@ def codeowners(repository, root):
     )
 
 
-def open_pr_workflow(revision):
-    return f"""name: Open a maintainer-reviewable PR
-on:
-  workflow_dispatch:
-    inputs:
-      head:
-        description: Source branch containing current main; App publishes review/<branch>
-        required: true
-        type: string
-      title:
-        description: Pull request title
-        required: true
-        type: string
-permissions:
-  contents: read
-jobs:
-  open:
-    runs-on: ubuntu-latest
-    environment: pluto-review
-    steps:
-      - uses: actions/checkout@{CHECKOUT}
-        with:
-          repository: {ORG}/pluto
-          ref: {revision}
-          path: policy
-          persist-credentials: false
-      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
-        id: app
-        with:
-          app-id: ${{{{ vars.PLUTO_REVIEW_APP_ID }}}}
-          private-key: ${{{{ secrets.PLUTO_REVIEW_APP_PRIVATE_KEY }}}}
-          owner: ${{{{ github.repository_owner }}}}
-          repositories: ${{{{ github.event.repository.name }}}}
-      - name: Publish the proposal and open PR as the App
-        env:
-          BOT_TOKEN: ${{{{ steps.app.outputs.token }}}}
-          TARGET_REPOSITORY: ${{{{ github.repository }}}}
-          PR_HEAD: ${{{{ inputs.head }}}}
-          PR_TITLE: ${{{{ inputs.title }}}}
-        run: python3 policy/scripts/pr_automation/open_pr.py
-"""
-
-
 def prepare(repository, root, revision):
     root = Path(root)
     directory = root / ".github/workflows"
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "pr-review.yml").write_text(entrypoint(repository, revision))
     (directory / "pr-review-events.yml").write_text(RELAY)
-    (directory / "pr-open.yml").write_text(open_pr_workflow(revision))
+    (directory / "pr-open.yml").unlink(missing_ok=True)
     (directory / "security.yml").write_text(
         security(
             revision,

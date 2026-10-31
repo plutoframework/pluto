@@ -7,7 +7,7 @@ import re
 import sys
 import tempfile
 
-from github import GitHub, GitHubError
+from github import AUTO_MERGE_QUERY, GitHub, GitHubError
 from policy import (
     CHECK_SCHEMA,
     GATE_CHECK,
@@ -18,6 +18,7 @@ from policy import (
     human_approval,
     human_reasons,
     review_blockers,
+    review_value,
 )
 from review import run as run_review
 
@@ -70,6 +71,21 @@ def workflows_ready(api, prefix, pr, repository):
     return reasons
 
 
+REVIEW_UNAVAILABLE = object()
+
+
+def review_scope(pr):
+    return {
+        "schema": CHECK_SCHEMA,
+        "repository": pr["base"]["repo"]["full_name"],
+        "number": pr["number"],
+        "head": pr["head"]["sha"],
+        "base": pr["base"]["sha"],
+        "policy": os.environ["POLICY_SHA"],
+        "reviewer": os.environ["BOT_LOGIN"],
+    }
+
+
 def previous_result(api, prefix, pr, app_id):
     checks = api.pages(
         f"{prefix}/commits/{pr['head']['sha']}/check-runs?filter=all",
@@ -81,23 +97,49 @@ def previous_result(api, prefix, pr, app_id):
             or item.get("app", {}).get("id") != app_id
         ):
             continue
-        if item.get("conclusion") != "success":
-            return None
         try:
             evidence = json.loads(item.get("output", {}).get("text", ""))
         except (TypeError, ValueError):
             return None
-        if (
-            evidence.get("schema") == CHECK_SCHEMA
-            and evidence.get("head") == pr["head"]["sha"]
-            and evidence.get("base") == pr["base"]["sha"]
-            and evidence.get("number") == pr["number"]
-            and evidence.get("repository") == pr["base"]["repo"]["full_name"]
-            and evidence.get("policy") == os.environ["POLICY_SHA"]
+        if isinstance(evidence, dict) and all(
+            evidence.get(key) == value
+            for key, value in review_scope(pr).items()
         ):
-            return evidence["result"]
+            if item.get("conclusion") != "success":
+                return REVIEW_UNAVAILABLE
+            result = evidence.get("result")
+            return result if isinstance(result, dict) else REVIEW_UNAVAILABLE
         return None
     return None
+
+
+def steward_review_state(reviews, head):
+    for review in sorted(reviews, key=lambda r: r["id"], reverse=True):
+        if (
+            review["user"]["login"] == os.environ["BOT_LOGIN"]
+            and review.get("commit_id") == head
+            and review["state"] in {"APPROVED", "CHANGES_REQUESTED"}
+        ):
+            return review["state"]
+    return None
+
+
+def requests_changes(result):
+    if not isinstance(result, dict):
+        return False
+    review = result.get("review")
+    if not isinstance(review, dict):
+        return False
+    issues = review.get("key_issues_to_review")
+    security = review_value(review.get("security_concerns"))
+    return (
+        isinstance(issues, list)
+        and bool(issues)
+        or review_value(review.get("merge_recommendation"))
+        == "changes_required"
+        or bool(security)
+        and security != "No"
+    )
 
 
 def qualified_reviewers(api, prefix, reviews):
@@ -105,6 +147,8 @@ def qualified_reviewers(api, prefix, reviews):
     for login in sorted(
         {(r.get("user") or {}).get("login") for r in reviews} - {None}
     ):
+        if login == os.environ["BOT_LOGIN"]:
+            continue
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9-]{0,38}", login):
             continue
         permission = api.request(f"{prefix}/collaborators/{login}/permission")[
@@ -132,11 +176,40 @@ def process(api, repository, number, fresh=False):
         "action_required",
         "Reevaluating all policy gates for the current revision.",
     )
+    if pr["user"]["login"] == os.environ["BOT_LOGIN"]:
+        check(
+            api,
+            prefix,
+            REVIEW_CHECK,
+            head,
+            "skipped",
+            "Steward must not author PRs. A contributor must submit this change; no model call was made.",
+        )
+        check(
+            api,
+            prefix,
+            GATE_CHECK,
+            head,
+            "action_required",
+            "PRs authored by Steward are outside the reviewer's role and cannot be approved or merged by it.",
+        )
+        return
     files = inventory(api, prefix, pr)
     reasons = human_reasons(repository, files)
     if any(not file.get("patch") for file in files):
         reasons.append("binary or omitted file diff")
     result = None if fresh else previous_result(api, prefix, pr, app_id)
+    if result is REVIEW_UNAVAILABLE:
+        check(
+            api,
+            prefix,
+            GATE_CHECK,
+            head,
+            "action_required",
+            "A review attempt for this revision is running, interrupted or failed. Push a new revision or explicitly retry the model review; CI notifications do not spend more review tokens.",
+        )
+        return
+    scope = review_scope(pr)
     if result is None:
         check(
             api,
@@ -145,6 +218,7 @@ def process(api, repository, number, fresh=False):
             head,
             "action_required",
             "Review is running; no merge is permitted yet.",
+            scope,
         )
         try:
             with tempfile.TemporaryDirectory() as directory:
@@ -159,6 +233,7 @@ def process(api, repository, number, fresh=False):
                 head,
                 "failure",
                 "Astra review failed or returned incomplete output. Retry the workflow; automatic merging remains blocked.",
+                scope,
             )
             check(
                 api,
@@ -178,17 +253,10 @@ def process(api, repository, number, fresh=False):
                 head,
                 "failure",
                 "PR changed during review. A fresh review is required.",
+                scope,
             )
             return
-        evidence = {
-            "schema": CHECK_SCHEMA,
-            "repository": f"{ORG}/{repository}",
-            "number": number,
-            "head": head,
-            "base": base,
-            "policy": os.environ["POLICY_SHA"],
-            "result": result,
-        }
+        evidence = {**scope, "result": result}
         if len(json.dumps(evidence)) > 60000:
             check(
                 api,
@@ -197,6 +265,7 @@ def process(api, repository, number, fresh=False):
                 head,
                 "failure",
                 "Structured review exceeds the evidence limit; maintainer investigation required.",
+                scope,
             )
             return
         # Success here means review completed, not that findings were absent.
@@ -219,10 +288,6 @@ def process(api, repository, number, fresh=False):
     blockers = review_blockers(result, maintainer=bool(approver))
     if reasons and not approver:
         blockers.append("Maintainer approval required: " + ", ".join(reasons))
-    if pr["user"]["login"] == os.environ["BOT_LOGIN"] and not approver:
-        blockers.append(
-            "The review App cannot approve its own PR; independent approval required"
-        )
     blockers.extend(workflows_ready(api, prefix, pr, repository))
     # Never dismiss or ignore a human's outstanding request for changes.
     latest = {}
@@ -230,7 +295,9 @@ def process(api, repository, number, fresh=False):
         if item["state"] != "COMMENTED":
             latest[item["user"]["login"]] = item
     if any(
-        r["state"] == "CHANGES_REQUESTED" and r["user"]["type"] == "User"
+        r["state"] == "CHANGES_REQUESTED"
+        and r["user"]["type"] == "User"
+        and r["user"]["login"] != os.environ["BOT_LOGIN"]
         for r in latest.values()
     ):
         blockers.append("A maintainer has requested changes")
@@ -239,6 +306,20 @@ def process(api, repository, number, fresh=False):
         blockers.append("PR revision changed; fresh review required")
     if current.get("mergeable") is not True:
         blockers.append("PR mergeability is unknown or conflicted")
+    if (
+        current["head"]["sha"] == head
+        and current["base"]["sha"] == base
+        and requests_changes(result)
+        and steward_review_state(reviews, head) != "CHANGES_REQUESTED"
+    ):
+        api.request(
+            f"{prefix}/pulls/{number}/reviews",
+            {
+                "event": "REQUEST_CHANGES",
+                "commit_id": head,
+                "body": "Astra identified unresolved findings or security concerns for this commit. See the PR review feedback and Pluto merge-policy check, then push fixes for a fresh review.",
+            },
+        )
     if blockers:
         check(
             api,
@@ -272,12 +353,7 @@ def process(api, repository, number, fresh=False):
             else "routine change qualifies for automatic approval."
         ),
     )
-    if pr["user"]["login"] != os.environ["BOT_LOGIN"] and not any(
-        r["state"] == "APPROVED"
-        and r.get("commit_id") == head
-        and r["user"]["login"] == os.environ["BOT_LOGIN"]
-        for r in reviews
-    ):
+    if steward_review_state(reviews, head) != "APPROVED":
         api.request(
             f"{prefix}/pulls/{number}/reviews",
             {
@@ -324,7 +400,7 @@ def process(api, repository, number, fresh=False):
     response = api.request(
         "/graphql",
         {
-            "query": "mutation($id: ID!, $head: GitObjectID!) { enablePullRequestAutoMerge(input: {pullRequestId: $id, expectedHeadOid: $head, mergeMethod: SQUASH}) { pullRequest { number } } }",
+            "query": AUTO_MERGE_QUERY,
             "variables": {"id": pr["node_id"], "head": head},
         },
     )
@@ -345,13 +421,15 @@ def main():
     if full_name not in {f"{ORG}/{name}" for name in REPOSITORIES}:
         raise ValueError("Repository is outside the protected Pluto inventory")
     repository = full_name.split("/")[1]
-    api = GitHub(os.environ["BOT_TOKEN"])
+    api = GitHub(os.environ["BOT_TOKEN"], os.environ["CHECK_TOKEN"])
+    if api.request("/user").get("login") != os.environ["BOT_LOGIN"]:
+        raise ValueError(
+            "Reviewer credential does not match the Steward identity"
+        )
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     if os.environ["GITHUB_EVENT_NAME"] == "pull_request_target":
         number = event["pull_request"]["number"]
-        process(
-            api, repository, number, fresh=event.get("action") == "synchronize"
-        )
+        process(api, repository, number)
     elif os.environ["GITHUB_EVENT_NAME"] == "workflow_run":
         run = event["workflow_run"]
         # Payload metadata can trigger reevaluation, never authorize a merge.
@@ -359,7 +437,13 @@ def main():
             if pr["head"]["sha"] == run["head_sha"]:
                 process(api, repository, pr["number"])
     elif os.environ["GITHUB_EVENT_NAME"] == "workflow_dispatch":
-        process(api, repository, int(event["inputs"]["pr_number"]))
+        process(
+            api,
+            repository,
+            int(event["inputs"]["pr_number"]),
+            fresh=str(event["inputs"].get("retry_review", "false")).lower()
+            == "true",
+        )
     else:
         raise ValueError("Unsupported privileged workflow event")
 

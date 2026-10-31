@@ -21,7 +21,6 @@
 /scripts/commentspacing/main_test.go @DavidHoenisch
 /scripts/pr_automation/controller.py @DavidHoenisch
 /scripts/pr_automation/github.py @DavidHoenisch
-/scripts/pr_automation/open_pr.py @DavidHoenisch
 /scripts/pr_automation/policy.py @DavidHoenisch
 /scripts/pr_automation/protect.py @DavidHoenisch
 /scripts/pr_automation/review.py @DavidHoenisch

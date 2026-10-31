@@ -39,9 +39,10 @@
       - name: Review current PR and evaluate policy
         env:
           GPUROUTER_API_KEY: ${{ secrets.GPUROUTER_API_KEY }}
-          BOT_TOKEN: ${{ steps.app.outputs.token }}
-          REVIEW_TOKEN: ${{ steps.app.outputs.token }}
-          BOT_LOGIN: pluto-pr-steward[bot]
+          CHECK_TOKEN: ${{ steps.app.outputs.token }}
+          BOT_TOKEN: ${{ secrets.PLUTO_STEWARD_TOKEN }}
+          REVIEW_TOKEN: ${{ secrets.PLUTO_STEWARD_TOKEN }}
+          BOT_LOGIN: jackbot-advrsty
           PLUTO_REVIEW_APP_ID: ${{ vars.PLUTO_REVIEW_APP_ID }}
           TARGET_REPOSITORY: ${{ github.repository }}
           POLICY_SHA: ${{ inputs.policy_revision }}

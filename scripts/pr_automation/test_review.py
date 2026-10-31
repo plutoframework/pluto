@@ -11,6 +11,7 @@ class ReviewSettingsTests(unittest.TestCase):
             {
                 "GPUROUTER_API_KEY": "synthetic",
                 "REVIEW_TOKEN": "synthetic",
+                "BOT_LOGIN": "jackbot-advrsty",
                 "CONFIG__USE_REPO_SETTINGS_FILE": "true",
                 "CONFIG__FALLBACK_MODELS": '["weak-model"]',
             },

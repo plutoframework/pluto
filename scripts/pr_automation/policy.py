@@ -23,7 +23,7 @@ REPOSITORIES = {
 SECURITY_WORKFLOW = ".github/workflows/security.yml"
 REVIEW_CHECK = "Pluto review"
 GATE_CHECK = "Pluto merge policy"
-CHECK_SCHEMA = 1
+CHECK_SCHEMA = 2
 
 
 def human_reasons(repository, files):
