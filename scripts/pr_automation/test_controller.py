@@ -148,6 +148,7 @@ class ControllerTests(unittest.TestCase):
         self.api.files = [{"filename": "crypto.go"}]
         self.run_gate()
         self.assertFalse(self.api.merged)
+        self.assertFalse(self.api.auto_enabled)
         self.assertEqual(self.api.checks[-1]["conclusion"], "action_required")
 
     def test_sensitive_change_with_current_human_approval_merges(self):
@@ -170,16 +171,19 @@ class ControllerTests(unittest.TestCase):
         self.api.race = True
         self.run_gate()
         self.assertFalse(self.api.merged)
+        self.assertFalse(self.api.auto_enabled)
 
     def test_failed_ci_or_review_does_not_merge(self):
         self.api.runs_succeed = False
         self.run_gate()
         self.assertFalse(self.api.merged)
+        self.assertFalse(self.api.auto_enabled)
         with patch(
             "controller.run_review", side_effect=RuntimeError("private failure")
         ):
             process(self.api, "pluto-core", 7)
         self.assertFalse(self.api.merged)
+        self.assertFalse(self.api.auto_enabled)
         self.assertEqual(self.api.checks[-1]["conclusion"], "failure")
         self.assertNotIn("private failure", json.dumps(self.api.checks))
 
@@ -188,12 +192,14 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.run_gate()
         self.assertFalse(self.api.merged)
+        self.assertFalse(self.api.auto_enabled)
         self.assertEqual(self.api.checks[-1]["conclusion"], "action_required")
 
     def test_review_only_mode_never_merges(self):
         with patch.dict(os.environ, {"ENABLE_AUTO_MERGE": "false"}):
             self.run_gate()
         self.assertFalse(self.api.merged)
+        self.assertFalse(self.api.auto_enabled)
 
     def test_spoofed_stale_or_wrong_base_review_is_not_reused(self):
         evidence = {
