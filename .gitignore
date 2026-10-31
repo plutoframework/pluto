@@ -2,3 +2,5 @@
 *.test
 coverage.*
 .env
+
+__pycache__/

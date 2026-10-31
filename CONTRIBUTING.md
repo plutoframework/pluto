@@ -53,6 +53,14 @@ The shared Go comment-spacing helper lives in `scripts/commentspacing`; keep its
 copies in library and CLI repositories synchronized. Run
 `go test ./scripts/commentspacing` after changing it.
 
+## Pull request review
+
+Changes to `main` use pull requests. Routine fixes can merge automatically after
+CI, security checks and a complete Astra review pass. Sensitive code and tooling
+changes require an independent maintainer approval. See the
+[product guide](https://plutoframework.github.io/pluto-site/docs/maintainers/pull-requests.md)
+for the policy, retries and credential boundaries.
+
 ## Send a focused contribution
 
 Explain the problem, resulting behavior, validation and any compatibility or
