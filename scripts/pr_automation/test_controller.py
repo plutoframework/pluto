@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from controller import process, previous_result
+from github import GitHubError
 from policy import CHECK_SCHEMA, REVIEW_CHECK
 from test_policy import CLEAN
 
@@ -33,6 +34,8 @@ class FakeAPI:
         self.reviews = []
         self.checks = []
         self.merged = False
+        self.auto_enabled = False
+        self.merge_status = None
         self.runs_succeed = True
         self.race = False
         self.reads = 0
@@ -59,9 +62,15 @@ class FakeAPI:
                 }
             )
             return {}
+        if path.endswith("/merge"):
+            assert method == "PUT" and data["sha"] == "head"
+            if self.merge_status:
+                raise GitHubError(self.merge_status, "PUT")
+            self.merged = True
+            return {"merged": True}
         if path == "/graphql":
             assert data["variables"]["head"] == "head"
-            self.merged = True
+            self.auto_enabled = True
             return {
                 "data": {
                     "enablePullRequestAutoMerge": {"pullRequest": {"number": 7}}
@@ -113,6 +122,27 @@ class ControllerTests(unittest.TestCase):
     def test_clean_routine_change_merges(self):
         self.run_gate()
         self.assertTrue(self.api.merged)
+
+    def test_pending_native_checks_queue_auto_merge(self):
+        self.api.merge_status = 405
+        self.run_gate()
+        self.assertFalse(self.api.merged)
+        self.assertTrue(self.api.auto_enabled)
+
+    def test_racing_merge_precondition_never_queues_new_head(self):
+        self.api.merge_status = 409
+        with self.assertRaises(GitHubError):
+            self.run_gate()
+        self.assertFalse(self.api.merged)
+        self.assertFalse(self.api.auto_enabled)
+        self.assertEqual(self.api.checks[-1]["conclusion"], "action_required")
+
+    def test_permission_failure_does_not_attempt_another_merge_route(self):
+        self.api.merge_status = 403
+        with self.assertRaises(GitHubError):
+            self.run_gate()
+        self.assertFalse(self.api.merged)
+        self.assertFalse(self.api.auto_enabled)
 
     def test_sensitive_file_does_not_merge_without_human(self):
         self.api.files = [{"filename": "crypto.go"}]

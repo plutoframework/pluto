@@ -6,6 +6,12 @@ import urllib.parse
 import urllib.request
 
 
+class GitHubError(RuntimeError):
+    def __init__(self, status, method):
+        self.status = status
+        super().__init__(f"GitHub {method} failed ({status})")
+
+
 class GitHub:
     def __init__(self, token):
         self.token = token
@@ -31,9 +37,7 @@ class GitHub:
                 content = response.read()
                 return json.loads(content) if content else None
         except urllib.error.HTTPError as error:
-            raise RuntimeError(
-                f"GitHub {method or 'GET'} failed ({error.code})"
-            ) from None
+            raise GitHubError(error.code, method or "GET") from None
 
     def pages(self, path, key=None):
         result = []

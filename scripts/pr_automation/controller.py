@@ -7,7 +7,7 @@ import re
 import sys
 import tempfile
 
-from github import GitHub
+from github import GitHub, GitHubError
 from policy import (
     CHECK_SCHEMA,
     GATE_CHECK,
@@ -286,8 +286,41 @@ def process(api, repository, number, fresh=False):
                 "body": "Pluto policy passed for this commit: complete Astra review, CI/security checks, and required maintainer approval.",
             },
         )
+
+    # Merge a fully ready PR atomically. GitHub rejects a racing head or any
+    # unmet branch rule. A 405 means readiness is pending, so queue auto-merge.
+    try:
+        merged = api.request(
+            f"{prefix}/pulls/{number}/merge",
+            {"sha": head, "merge_method": "squash"},
+            method="PUT",
+        )
+    except GitHubError as error:
+        if error.status != 405:
+            check(
+                api,
+                prefix,
+                GATE_CHECK,
+                head,
+                "action_required",
+                "GitHub rejected the merge precondition. Fresh review or maintainer investigation is required.",
+            )
+            raise
+    else:
+        if merged.get("merged") is not True:
+            check(
+                api,
+                prefix,
+                GATE_CHECK,
+                head,
+                "action_required",
+                "GitHub did not confirm that the PR merged.",
+            )
+            raise RuntimeError("Merge was not confirmed")
+        return
+
     # Native auto-merge waits for CodeQL, conversation resolution and all other
-    # branch rules. A push races safely: expectedHeadOid rejects another revision.
+    # branch rules. expectedHeadOid rejects a push during this transition.
     response = api.request(
         "/graphql",
         {
