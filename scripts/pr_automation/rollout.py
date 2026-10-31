@@ -48,11 +48,9 @@ concurrency:
   group: pluto-review-${{{{ github.event.pull_request.head.ref || github.event.workflow_run.head_branch || inputs.pr_number }}}}
   cancel-in-progress: false
 jobs:
-  review:
-    uses: {ORG}/pluto/.github/workflows/pr-review-shared.yml@{revision}
-    with:
-      policy_revision: {revision}
-"""
+""" + (ROOT / ".github/pr-review-job.yml").read_text().split("\n", 1)[
+        1
+    ].replace("${{ inputs.policy_revision }}", revision)
 
 
 RELAY = """name: Notify PR review
