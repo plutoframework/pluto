@@ -49,6 +49,10 @@ Go modules. They do not require an application manifest. `pluto fmt` and
 `pluto vet` remain application commands. See each library's `CONTRIBUTING.md`
 for prerequisites and additional fuzz, mutation and service integration checks.
 
+The shared Go comment-spacing helper lives in `scripts/commentspacing`; keep its
+copies in library and CLI repositories synchronized. Run
+`go test ./scripts/commentspacing` after changing it.
+
 ## Send a focused contribution
 
 Explain the problem, resulting behavior, validation and any compatibility or
