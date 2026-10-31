@@ -1,0 +1,29 @@
+name: Review credential preflight
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  credentials:
+    runs-on: ubuntu-latest
+    environment: pluto-review
+    steps:
+      - name: Verify protected credentials exist
+        env:
+          GPUROUTER_API_KEY: ${{ secrets.GPUROUTER_API_KEY }}
+          PLUTO_REVIEW_APP_PRIVATE_KEY: ${{ secrets.PLUTO_REVIEW_APP_PRIVATE_KEY }}
+          PLUTO_REVIEW_APP_ID: ${{ vars.PLUTO_REVIEW_APP_ID }}
+        run: |
+          python3 - <<'PY'
+          import os
+          names = ['GPUROUTER_API_KEY', 'PLUTO_REVIEW_APP_PRIVATE_KEY', 'PLUTO_REVIEW_APP_ID']
+          missing = [name for name in names if not os.environ.get(name)]
+          if missing:
+              raise SystemExit('Missing protected configuration: ' + ', '.join(missing))
+          print('Protected review credentials are configured.')
+          PY
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        with:
+          app-id: ${{ vars.PLUTO_REVIEW_APP_ID }}
+          private-key: ${{ secrets.PLUTO_REVIEW_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
