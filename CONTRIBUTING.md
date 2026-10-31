@@ -61,6 +61,9 @@ changes require an independent maintainer approval. See the
 [product guide](https://plutoframework.github.io/pluto-site/docs/maintainers/pull-requests.md)
 for the policy, retries and credential boundaries.
 
+Push review fixes to the existing PR branch so the next review evaluates the
+updated change and revisits previous findings.
+
 ## Send a focused contribution
 
 Explain the problem, resulting behavior, validation and any compatibility or
