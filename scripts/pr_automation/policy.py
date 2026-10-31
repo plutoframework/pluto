@@ -23,7 +23,7 @@ REPOSITORIES = {
 SECURITY_WORKFLOW = ".github/workflows/security.yml"
 REVIEW_CHECK = "Pluto review"
 GATE_CHECK = "Pluto merge policy"
-CHECK_SCHEMA = 1
+CHECK_SCHEMA = 2
 
 
 def human_reasons(repository, files):
@@ -100,6 +100,11 @@ def human_reasons(repository, files):
     return sorted(reasons)
 
 
+def review_value(value):
+    """PR-Agent YAML block scalars may retain a terminal newline in JSON."""
+    return value.strip() if isinstance(value, str) else None
+
+
 def review_blockers(result, maintainer=False):
     """Only explicit, complete, low-risk reviews qualify for automation."""
     if not isinstance(result, dict):
@@ -112,11 +117,11 @@ def review_blockers(result, maintainer=False):
     for key in ("files_not_reviewed", "files_partially_reviewed"):
         if coverage.get(key) != []:
             blockers.append("Incomplete review coverage: " + key)
-    if review.get("risk_level") not in (
+    if review_value(review.get("risk_level")) not in (
         {"low", "medium", "high"} if maintainer else {"low"}
     ):
         blockers.append("Review risk is not explicitly low")
-    if review.get("merge_recommendation") not in (
+    if review_value(review.get("merge_recommendation")) not in (
         {"no_concerns_found", "needs_review"}
         if maintainer
         else {"no_concerns_found"}
@@ -124,7 +129,7 @@ def review_blockers(result, maintainer=False):
         blockers.append("Review does not explicitly recommend merging")
     if review.get("key_issues_to_review") != []:
         blockers.append("Review has findings or a missing findings list")
-    if review.get("security_concerns") != "No":
+    if review_value(review.get("security_concerns")) != "No":
         blockers.append("Security concerns are present or unknown")
     return blockers
 

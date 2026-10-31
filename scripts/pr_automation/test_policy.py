@@ -72,6 +72,31 @@ class PolicyTests(unittest.TestCase):
         for value in [None, {}, {"review": {}}, {"review": {}, "coverage": {}}]:
             self.assertTrue(review_blockers(value))
 
+    def test_yaml_scalar_whitespace_is_not_a_new_decision(self):
+        result = copy.deepcopy(CLEAN)
+        result["review"].update(
+            risk_level="medium\n",
+            merge_recommendation="needs_review\n",
+            security_concerns="No\n",
+        )
+        self.assertEqual(review_blockers(result, maintainer=True), [])
+        self.assertTrue(review_blockers(result, maintainer=False))
+        result["review"]["risk_level"] = "low\n"
+        result["review"]["merge_recommendation"] = "no_concerns_found\n"
+        self.assertEqual(review_blockers(result), [])
+
+    def test_non_string_or_unknown_decisions_stay_blocked(self):
+        for field, value in [
+            ("risk_level", True),
+            ("risk_level", "LOW"),
+            ("merge_recommendation", None),
+            ("security_concerns", False),
+            ("security_concerns", "No concerns maybe"),
+        ]:
+            result = copy.deepcopy(CLEAN)
+            result["review"][field] = value
+            self.assertTrue(review_blockers(result, maintainer=True))
+
     def test_only_current_independent_human_approval_counts(self):
         review = {
             "id": 1,

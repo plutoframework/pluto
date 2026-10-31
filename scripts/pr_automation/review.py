@@ -15,16 +15,21 @@ def environment():
             "OPENAI__API_BASE": "https://gpurouter.io/v1",
             "GITHUB__USER_TOKEN": os.environ["REVIEW_TOKEN"],
             "GITHUB__DEPLOYMENT_TYPE": "user",
+            "GITHUB__AGENT_LOGIN": os.environ["BOT_LOGIN"],
             "CONFIG__MODEL": "openai/openai/gpt-6-astra",
             "CONFIG__CUSTOM_MODEL_MAX_TOKENS": "128000",
             "CONFIG__REASONING_EFFORT": "high",
+            "CONFIG__AI_TIMEOUT": "600",
+            "CONFIG__RETRY_SAME_MODEL_ON_TIMEOUT": "false",
+            # Leave prompt space within PR-Agent's 32k total token budget.
+            "CONFIG__MAX_OUTPUT_TOKENS": "16384",
             "CONFIG__ADDITIONAL_REASONING_EFFORT_MODELS": '["openai/openai/gpt-6-astra"]',
             "CONFIG__FALLBACK_MODELS": "[]",
             "IGNORE__GLOB": "[]",
             "IGNORE__REGEX": "[]",
             "CONFIG__IGNORE_LANGUAGE_FRAMEWORK": "[]",
             "CONFIG__NO_TEMPERATURE_MODELS": '["openai/openai/gpt-6-astra"]',
-            "CONFIG__NUM_RETRIES": "1",
+            "CONFIG__NUM_RETRIES": "0",
             "CONFIG__USE_REPO_SETTINGS_FILE": "false",
             "CONFIG__USE_GLOBAL_SETTINGS_FILE": "false",
             "CONFIG__PROPAGATE_TOOL_ERRORS": "true",
@@ -62,6 +67,10 @@ def environment():
             "LOG_LEVEL": "ERROR",
         }
     )
+    # The model reviewer only needs the Steward account credential. Keep the
+    # separately scoped App check-signing token out of its environment.
+    for key in ("CHECK_TOKEN", "BOT_TOKEN", "GITHUB_TOKEN"):
+        env.pop(key, None)
     return env
 
 
