@@ -15,6 +15,9 @@ def environment():
             "OPENAI__API_BASE": "https://gpurouter.io/v1",
             "GITHUB__USER_TOKEN": os.environ["REVIEW_TOKEN"],
             "GITHUB__DEPLOYMENT_TYPE": "user",
+            # Token mode accepts installation tokens; identify their actual App
+            # login because installation tokens cannot call GitHub's GET /user.
+            "GITHUB__AGENT_LOGIN": "pluto-pr-steward[bot]",
             "CONFIG__MODEL": "openai/openai/gpt-6-astra",
             "CONFIG__CUSTOM_MODEL_MAX_TOKENS": "128000",
             "CONFIG__REASONING_EFFORT": "high",
