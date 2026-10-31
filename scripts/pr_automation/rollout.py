@@ -83,7 +83,7 @@ def security(revision, has_go, has_node):
     if has_go:
         steps += f"""      - uses: actions/setup-go@{GO}
         with:
-          go-version: "1.26.0"
+          go-version: "1.26.10"
           cache: false
 """
     if has_node:

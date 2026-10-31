@@ -5,15 +5,32 @@ on:
       policy_revision:
         type: string
         required: true
+    secrets:
+      GPUROUTER_API_KEY:
+        required: false
+      PLUTO_REVIEW_APP_PRIVATE_KEY:
+        required: false
 permissions:
   contents: read
 jobs:
   review:
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.head_branch != github.event.repository.default_branch &&
+       contains(fromJSON('["pull_request", "pull_request_review", "dynamic"]'), github.event.workflow_run.event))
     name: Review and enforce merge policy
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: pluto-review
     steps:
+      - name: Create repository-scoped bot token
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
+        with:
+          app-id: ${{ vars.PLUTO_REVIEW_APP_ID }}
+          private-key: ${{ secrets.PLUTO_REVIEW_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: plutoframework/pluto
@@ -33,14 +50,6 @@ jobs:
       - name: Install locked reviewer dependencies
         working-directory: pr-agent
         run: uv sync --frozen --extra github --no-dev
-      - name: Create repository-scoped bot token
-        id: app
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510
-        with:
-          app-id: ${{ vars.PLUTO_REVIEW_APP_ID }}
-          private-key: ${{ secrets.PLUTO_REVIEW_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: ${{ github.event.repository.name }}
       - name: Review current PR and evaluate policy
         env:
           GPUROUTER_API_KEY: ${{ secrets.GPUROUTER_API_KEY }}
