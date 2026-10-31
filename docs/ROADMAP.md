@@ -8,8 +8,9 @@ library, generator, frontend, example and documentation deliverables.
 
 ## Order of work
 
-1. **Shipped:** Auth v0.4.0 shared account and ceremony foundation.
-2. **Next:** native social sign-in and second-factor workflows; missing CI
+1. **Shipped:** Auth v0.4.0 account/ceremony foundation and native OIDC sign-in
+   (OIDC modules v0.1.1, PostgreSQL v0.5.0).
+2. **Next:** GitHub, explicit account linking and native second-factor workflows; missing CI
    in the CLI, RBAC and reference application.
 3. **Then:** account security management, operational recovery and deliberate
    generator upgrades.

@@ -19,7 +19,7 @@ libraries and secure defaults give your application a consistent starting point.
 Go **1.25.5+** and Git are required:
 
 ```sh
-go install github.com/plutoframework/cli/cmd/pluto@v0.14.0
+go install github.com/plutoframework/cli/cmd/pluto@v0.15.0
 ```
 
 ### 2. Create and run
@@ -49,7 +49,7 @@ remain intentionally unimplemented until you add operations, authorization and t
 | ------------------------------------------------------------ | ---------------------------------------------------------- |
 | [CLI](https://github.com/plutoframework/cli)                 | Scaffolds, terminal wizard, formatting, checks and OpenAPI |
 | [Core](https://github.com/plutoframework/pluto-core)         | Pagination, idempotency, cache, flags and business state   |
-| [Auth](https://github.com/plutoframework/pluto-auth)         | Sessions and optional local credential lifecycle           |
+| [Auth](https://github.com/plutoframework/pluto-auth)         | Sessions, local credentials and OIDC sign-in           |
 | [RBAC](https://github.com/plutoframework/pluto-rbac)         | Named roles, capabilities and scoped assignments           |
 | [Jobs](https://github.com/plutoframework/pluto-jobs)         | Durable workers and transactional PostgreSQL outbox        |
 | [Agent](https://github.com/plutoframework/pluto-agent)       | Typed AI runs and explicitly authorized tools              |
