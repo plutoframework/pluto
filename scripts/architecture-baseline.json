@@ -20,6 +20,36 @@
       "file": "scripts/check.sh",
       "line": 1,
       "messageContains": "canonical CLI check invocation is absent"
+    },
+    {
+      "id": "ARCH201",
+      "file": "internal/operations/access.go",
+      "line": 1,
+      "messageContains": "no declared managed operation boundary"
+    },
+    {
+      "id": "ARCH301",
+      "file": "internal/domain/model.go",
+      "line": 69,
+      "messageContains": "publicly mutable lifecycle field"
+    },
+    {
+      "id": "ARCH302",
+      "file": "internal/operations/purchases.go",
+      "line": 240,
+      "messageContains": "raw lifecycle decision escapes domain ownership"
+    },
+    {
+      "id": "ARCH303",
+      "file": "internal/storage/memory/store.go",
+      "line": 137,
+      "messageContains": "data entry accepts a raw lifecycle entity"
+    },
+    {
+      "id": "ARCH303",
+      "file": "internal/storage/postgres/transactions.go",
+      "line": 33,
+      "messageContains": "data entry accepts a raw lifecycle entity"
     }
   ]
 }

@@ -113,6 +113,27 @@ class HarnessTests(unittest.TestCase):
         self.assertFalse(report["expectedFailureChecksPassed"])
         self.assertTrue(report["errors"])
 
+    def test_every_pinned_boundary_failure_is_required(self):
+        ledger = json.loads(Path(__file__).parents[1].joinpath(
+            "architecture-baseline.json").read_text())
+        payload = copy.deepcopy(self.payload)
+        payload["diagnostics"] = []
+        for expected in ledger["expected"]:
+            path = self.baseline / expected["file"]
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("source\n" * expected["line"])
+            payload["diagnostics"].append({
+                "id": expected["id"], "file": expected["file"],
+                "line": expected["line"], "severity": "error",
+                "message": expected["messageContains"], "repair": "repair",
+            })
+        validate(payload, 1, self.baseline, ledger, False)
+        for index in range(len(payload["diagnostics"])):
+            incomplete = copy.deepcopy(payload)
+            omitted = incomplete["diagnostics"].pop(index)
+            with self.subTest(omitted=omitted), self.assertRaises(EvidenceError):
+                validate(incomplete, 1, self.baseline, ledger, False)
+
 
 if __name__ == "__main__":
     unittest.main()
