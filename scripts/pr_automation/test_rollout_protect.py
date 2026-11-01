@@ -1,6 +1,7 @@
 """Owner rollout and native protections retain independent review and CI."""
 
 import json
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -79,6 +80,45 @@ class ProtectionPayloadTests(unittest.TestCase):
                 "security_alerts_threshold": "high_or_higher",
             }],
         )
+
+    @patch("protect.subprocess.run")
+    @patch("protect.subprocess.check_output")
+    def test_first_apply_requires_explicit_unprotected(self, read, write):
+        response = {"message": "Branch not protected", "status": "404"}
+        read.side_effect = [
+            subprocess.CalledProcessError(
+                1, "gh api", output=json.dumps(response)
+            ),
+            "[]",
+        ]
+        apply("pluto-core", 456)
+        self.assertEqual(write.call_count, 3)
+        payload = json.loads(write.call_args_list[0].kwargs["input"])
+        self.assertEqual(payload, protection_payload(456, {}))
+
+    @patch("protect.subprocess.run")
+    @patch("protect.subprocess.check_output")
+    def test_unknown_errors_fail_before_any_write(self, read, write):
+        responses = [
+            {"message": "Not Found", "status": "404"},
+            {"message": "Resource not accessible", "status": "403"},
+            {"message": "Branch not protected", "status": "403"},
+            {"message": "Branch not protected"},
+            ["Branch not protected", "404"],
+            "Branch not protected (HTTP 404)",
+            None,
+        ]
+        bodies = [json.dumps(response) for response in responses]
+        bodies.extend(["not JSON", "", None])
+        for body in bodies:
+            with self.subTest(body=body):
+                error = subprocess.CalledProcessError(
+                    1, "gh api", output=body
+                )
+                read.side_effect = error
+                with self.assertRaises(subprocess.CalledProcessError):
+                    apply("pluto-core", 456)
+                write.assert_not_called()
 
     def test_native_independence_and_security_requirements_remain(self):
         payload = protection_payload(456, {})
