@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import uuid
 
 
 REQUIRED = {
@@ -41,6 +42,40 @@ def command(arguments, *, cwd=None, env=None, timeout=180):
     return result.stdout
 
 
+OWNER_LABEL = "pluto.operation-conformance.owner"
+
+
+def remove_owned(name, owner):
+    try:
+        inspected = command(["docker", "inspect", name], timeout=30)
+    except RuntimeError as error:
+        # Only the engine's explicit absent-object response is harmless. Daemon
+        # outages, permission failures and timeouts remain cleanup failures.
+        if f"No such object: {name}" in str(error) or f"No such container: {name}" in str(error):
+            return
+        raise
+    objects = json.loads(inspected)
+    if not isinstance(objects, list) or len(objects) != 1:
+        raise ValueError("invalid owned-container inspection")
+    container = objects[0]
+    if not isinstance(container, dict):
+        raise ValueError("invalid owned-container object")
+    config = container.get("Config")
+    labels = config.get("Labels") if isinstance(config, dict) else None
+    if not isinstance(labels, dict) or labels.get(OWNER_LABEL) != owner:
+        raise ValueError("container ownership mismatch; refusing removal")
+    identity = container.get("Id")
+    if not isinstance(identity, str) or not identity:
+        raise ValueError("owned container identity missing")
+    # Delete the inspected immutable ID, never a name another resource could
+    # acquire between inspection and removal.
+    try:
+        command(["docker", "rm", "--force", identity], timeout=30)
+    except RuntimeError as error:
+        if f"No such container: {identity}" not in str(error):
+            raise
+
+
 def run(core, rbac, image="postgres:17-alpine"):
     report = {
         "version": 1, "passed": False, "candidateOnly": True,
@@ -48,6 +83,7 @@ def run(core, rbac, image="postgres:17-alpine"):
         "errors": [],
     }
     container = None
+    owner = uuid.uuid4().hex
     try:
         report["sources"] = {}
         for name, directory in (("core", core), ("rbac", rbac)):
@@ -60,11 +96,14 @@ def run(core, rbac, image="postgres:17-alpine"):
                 "untrackedSource": [name for name in command(["git", "-C", str(directory), "ls-files", "--others", "--exclude-standard"]).splitlines()
                                     if Path(name).suffix in {".go", ".mod", ".sum"}],
             }
-        container = command([
-            "docker", "run", "--detach", "--rm", "--publish", "127.0.0.1::5432",
+        container = "pluto-operation-" + owner
+        command([
+            "docker", "run", "--detach", "--rm", "--name", container,
+            "--label", f"{OWNER_LABEL}={owner}",
+            "--publish", "127.0.0.1::5432",
             "--env", "POSTGRES_PASSWORD=operation-conformance", "--env",
             "POSTGRES_DB=conformance", image,
-        ]).strip()
+        ])
         report["database"] = {"image": image, "imageID": command([
             "docker", "inspect", "--format", "{{.Image}}", container,
         ]).strip(), "disposable": True}
@@ -105,9 +144,9 @@ def run(core, rbac, image="postgres:17-alpine"):
     finally:
         if container:
             try:
-                command(["docker", "rm", "--force", container], timeout=30)
+                remove_owned(container, owner)
                 report.setdefault("database", {})["removed"] = True
-            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 report["errors"].append(f"database cleanup failed: {error}")
                 report["passed"] = False
     return report
