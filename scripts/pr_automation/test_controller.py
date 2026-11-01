@@ -240,10 +240,20 @@ class ControllerTests(unittest.TestCase):
                 self.assertFalse(self.api.merged)
                 self.assertFalse(self.api.auto_enabled)
 
-    def test_other_bot_or_unknown_author_never_spends_review_tokens(self):
+    def test_independent_bot_contributor_can_receive_steward_approval(self):
+        self.api.pr["user"] = {"login": "dependabot[bot]", "type": "Bot"}
+        self.run_gate()
+        self.assertTrue(self.api.merged)
+        self.assertEqual(self.api.reviews[-1]["state"], "APPROVED")
+        self.assertEqual(self.api.reviews[-1]["user"]["login"], "bot")
+
+    def test_unknown_author_never_spends_review_tokens(self):
         for author in (
-            {"login": "dependency-bot", "type": "Bot"},
             {"login": "unknown"},
+            {"login": None, "type": "User"},
+            {"login": " ", "type": "User"},
+            {"login": " author ", "type": "User"},
+            None,
         ):
             with self.subTest(author=author):
                 self.api = FakeAPI()

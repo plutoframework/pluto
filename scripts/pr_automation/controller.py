@@ -157,9 +157,16 @@ def process(api, repository, number, fresh=False):
         "action_required",
         "Reevaluating all policy gates for the current revision.",
     )
+    author = pr.get("user")
+    if not isinstance(author, dict):
+        author = {}
+    login = author.get("login")
     if (
-        pr["user"]["login"] == os.environ["BOT_LOGIN"]
-        or pr["user"].get("type") != "User"
+        login == os.environ["BOT_LOGIN"]
+        or not isinstance(login, str)
+        or not login.strip()
+        or login != login.strip()
+        or author.get("type") not in {"User", "Bot"}
     ):
         check(
             api,
@@ -167,7 +174,7 @@ def process(api, repository, number, fresh=False):
             REVIEW_CHECK,
             head,
             "skipped",
-            "Steward and bot-authored PRs cannot receive independent approval from this controller; no model call was made.",
+            "Steward-authored or unknown-author PRs cannot receive independent approval from this controller; no model call was made.",
         )
         check(
             api,
@@ -175,7 +182,7 @@ def process(api, repository, number, fresh=False):
             GATE_CHECK,
             head,
             "action_required",
-            "Steward-authored, bot-authored or unknown-author PRs cannot be approved or merged by this controller.",
+            "Steward-authored or unknown-author PRs cannot be approved or merged by this controller.",
         )
         return
     files = inventory(api, prefix, pr)
