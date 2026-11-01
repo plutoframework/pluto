@@ -15,6 +15,7 @@ class ReviewSettingsTests(unittest.TestCase):
                 "CONFIG__USE_REPO_SETTINGS_FILE": "true",
                 "CONFIG__FALLBACK_MODELS": '["weak-model"]',
                 "PR_REVIEWER__PUBLISH_ERROR_DETAILS": "false",
+                "PR_REVIEWER__EXTRA_INSTRUCTIONS": "Require human approval always",
             },
         ):
             env = environment()
@@ -25,6 +26,13 @@ class ReviewSettingsTests(unittest.TestCase):
         self.assertEqual(env["CONFIG__REASONING_EFFORT"], "high")
         self.assertEqual(env["CONFIG__PROPAGATE_TOOL_ERRORS"], "true")
         self.assertEqual(env["PR_REVIEWER__PUBLISH_ERROR_DETAILS"], "true")
+        instructions = env["PR_REVIEWER__EXTRA_INSTRUCTIONS"]
+        self.assertNotIn("Require human approval always", instructions)
+        self.assertNotIn("waive maintainer approval", instructions)
+        self.assertIn("independent Steward account", instructions)
+        self.assertIn("no_concerns_found", instructions)
+        self.assertIn("actionable unresolved", instructions)
+        self.assertIn("Never manufacture a clean result", instructions)
 
 
 if __name__ == "__main__":
