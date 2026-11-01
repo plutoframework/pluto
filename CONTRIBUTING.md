@@ -32,6 +32,33 @@ for the behavior changed. Real-service checks require isolated services; a skip 
 not a pass. For docs-only changes, check links and execute changed examples. Never
 suppress checks to hide a failure; report missing prerequisites and untested edges.
 
+## Frozen architecture baseline
+
+The framework-owned negative conformance runner invokes a supplied candidate CLI
+directly against the pinned, unchanged `pluto-example` baseline. It never invokes
+example-owned checks or updates its source, manifest or pins. The trusted ledger
+is `scripts/architecture-baseline.json`.
+
+```sh
+python3 -m unittest discover -s scripts -p 'test_runner.py'
+python3 scripts/check-architecture-baseline.py --cli /absolute/path/to/pluto \
+  --baseline ../pluto-example --report /tmp/architecture-evidence.json
+```
+
+A successful runner exit proves only the ledger's expected failures were found;
+`targetCompliancePassed` remains false. Evidence records baseline and executable
+hashes, diagnostics coverage gaps and errors. Missing/crashed checkers, malformed
+reports, unexpected exits and changed baseline files fail. Untracked files fail
+except `.DS_Store` and ignored non-source artifacts; ignored source, configuration
+and scripts still fail outside generated dependency/build directories
+(`node_modules`, `dist`, `.next`, `__pycache__`, `test-results`,
+`playwright-report`, `coverage`). These ignored outputs are not assessed.
+`--require-complete` also fails when the checker reports any unassessed boundary.
+This staged proof does not close G1–G10 or prove
+trusted CI execution. The existing automation-test workflow runs the runner
+selftests without a candidate CLI dependency. The candidate command is unreleased;
+supply a locally built CLI rather than assuming the published release supports it.
+
 ## Library maintainer tooling
 
 The Core, Auth, RBAC, Jobs, Agent and Frontend repositories expose the same

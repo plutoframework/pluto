@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "revision": "a54f525318900a8f09983ed202f7c436ea2d494f",
+  "coverage": "Targeted frozen-baseline failures only; G1-G10 remain open.",
+  "expected": [
+    {
+      "id": "ARCH002",
+      "file": "pluto.toml",
+      "messageContains": "schema",
+      "line": 1
+    },
+    {
+      "id": "ARCH101",
+      "file": "internal/storage/postgres/jobs.go",
+      "line": 6,
+      "messageContains": "internal/background"
+    },
+    {
+      "id": "ARCH007",
+      "file": "scripts/check.sh",
+      "line": 1,
+      "messageContains": "canonical CLI check invocation is absent"
+    }
+  ]
+}
