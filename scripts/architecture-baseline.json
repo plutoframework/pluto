@@ -86,6 +86,18 @@
       "file": "internal/background/audit.go",
       "line": 28,
       "messageContains": "job payload handling lacks a declared operation-bound effect"
+    },
+    {
+      "id": "ARCH211",
+      "file": "internal/background/audit.go",
+      "line": 26,
+      "messageContains": "worker handler binding exists outside a declared managed operation adapter"
+    },
+    {
+      "id": "ARCH212",
+      "file": "internal/operations/review.go",
+      "line": 60,
+      "messageContains": "agent tool binding exists outside a declared managed operation adapter"
     }
   ]
 }
