@@ -40,6 +40,8 @@ def environment():
             "CONFIG__IGNORE_PR_TITLE": "[]",
             "CONFIG__IGNORE_PR_AUTHORS": "[]",
             "GITHUB__IGNORE_BOT_PR": "false",
+            # Pinned PR-Agent emits only allowlisted, sanitized failure reasons.
+            "PR_REVIEWER__PUBLISH_ERROR_DETAILS": "true",
             "PR_REVIEWER__REQUIRE_RISK_ASSESSMENT": "true",
             "PR_REVIEWER__REQUIRE_MERGE_RECOMMENDATION": "true",
             "PR_REVIEWER__REQUIRE_TESTS_REVIEW": "true",

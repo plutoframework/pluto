@@ -23,6 +23,7 @@ class ReviewSettingsTests(unittest.TestCase):
         self.assertEqual(env["CONFIG__FALLBACK_MODELS"], "[]")
         self.assertEqual(env["CONFIG__REASONING_EFFORT"], "high")
         self.assertEqual(env["CONFIG__PROPAGATE_TOOL_ERRORS"], "true")
+        self.assertEqual(env["PR_REVIEWER__PUBLISH_ERROR_DETAILS"], "true")
 
 
 if __name__ == "__main__":
