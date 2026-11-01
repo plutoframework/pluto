@@ -40,7 +40,7 @@ example-owned checks or updates its source, manifest or pins. The trusted ledger
 is `scripts/architecture-baseline.json`.
 
 ```sh
-python3 -m unittest discover -s scripts -p 'test_runner.py'
+PYTHONPATH=scripts python3 -m unittest architecture_baseline.test_runner -v
 python3 scripts/check-architecture-baseline.py --cli /absolute/path/to/pluto \
   --baseline ../pluto-example --report /tmp/architecture-evidence.json
 ```
@@ -58,6 +58,23 @@ This staged proof does not close G1–G10 or prove
 trusted CI execution. The existing automation-test workflow runs the runner
 selftests without a candidate CLI dependency. The candidate command is unreleased;
 supply a locally built CLI rather than assuming the published release supports it.
+
+The candidate operation conformance runner composes local Core and RBAC checkouts
+in a temporary module and provisions its own disposable PostgreSQL container:
+
+```sh
+PYTHONPATH=scripts python3 -m unittest operation_conformance.test_runner -v
+python3 scripts/check-operation-conformance.py \
+  --core ../pluto-core --rbac ../pluto-rbac \
+  --report /tmp/operation-conformance.json
+```
+
+It requires the named permission, concurrent-write and rollback tests to execute
+under the race detector; a skip or missing test fails. Evidence records candidate
+revisions, dirty state, fixture hash and database image identity. The runner
+cleans up its owned container on success and failure. This proves the composed
+reference path, not published dependency compatibility or automatic adoption by
+generated applications. CI runs the runner's dependency-free selftests.
 
 ## Library maintainer tooling
 
