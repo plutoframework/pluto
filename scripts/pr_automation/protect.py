@@ -49,11 +49,26 @@ def protection_payload(app_id, existing):
 
 def apply(repository, app_id):
     base = f"repos/{ORG}/{repository}"
-    existing_protection = json.loads(
-        subprocess.check_output(
-            ["gh", "api", base + "/branches/main/protection"], text=True
+    try:
+        existing_protection = json.loads(
+            subprocess.check_output(
+                ["gh", "api", base + "/branches/main/protection"],
+                text=True,
+                stderr=subprocess.PIPE,
+            )
         )
-    )
+    except subprocess.CalledProcessError as error:
+        try:
+            response = json.loads(error.output)
+        except (ValueError, TypeError):
+            raise error
+        if (
+            not isinstance(response, dict)
+            or response.get("message") != "Branch not protected"
+            or str(response.get("status")) != "404"
+        ):
+            raise
+        existing_protection = {}
     payload = protection_payload(app_id, existing_protection)
     subprocess.run(
         [
