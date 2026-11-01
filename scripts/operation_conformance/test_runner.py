@@ -137,12 +137,20 @@ class ResultTests(unittest.TestCase):
                     raise RuntimeError(f"synthetic {step} failure")
                 return ""
 
+            def ready(arguments, **unused):
+                # Bootstrap accepts Unix sockets before consumer TCP is ready.
+                self.assertIn("-h", arguments)
+                self.assertEqual(
+                    arguments[arguments.index("-h") + 1], "127.0.0.1"
+                )
+                return SimpleNamespace(returncode=0)
+
             with patch(
                 "operation_conformance.runner.command", side_effect=execute
             ) as commands:
                 with patch(
                     "operation_conformance.runner.subprocess.run",
-                    return_value=SimpleNamespace(returncode=0),
+                    side_effect=ready,
                 ):
                     report = run(
                         root / "core",

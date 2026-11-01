@@ -251,7 +251,16 @@ def run(core, rbac, auth, jobs, image="postgres:17-alpine"):
         deadline = time.monotonic() + 45
         while True:
             result = subprocess.run(
-                ["docker", "exec", container, "pg_isready", "-U", "postgres"],
+                [
+                    "docker",
+                    "exec",
+                    container,
+                    "pg_isready",
+                    "-h",
+                    "127.0.0.1",
+                    "-U",
+                    "postgres",
+                ],
                 capture_output=True,
                 timeout=10,
                 check=False,
