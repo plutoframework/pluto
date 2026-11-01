@@ -93,6 +93,15 @@ class ResultTests(unittest.TestCase):
                 validate_results(output)
 
     def test_owned_container_is_removed_after_test_failure(self):
+        self.assert_failed_step_stops_run("test")
+
+    def test_formatter_failure_prevents_runtime_evidence(self):
+        self.assert_failed_step_stops_run("format")
+
+    def test_linter_failure_prevents_runtime_evidence(self):
+        self.assert_failed_step_stops_run("lint")
+
+    def assert_failed_step_stops_run(self, step):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             for name in ("core", "rbac", "auth", "jobs"):
@@ -119,8 +128,13 @@ class ResultTests(unittest.TestCase):
                     )
                 if arguments[:2] == ["docker", "port"]:
                     return "127.0.0.1:12345\n"
-                if arguments[:2] == ["go", "test"]:
-                    raise RuntimeError("synthetic test failure")
+                selected = {
+                    "test": arguments[:2] == ["go", "test"],
+                    "format": arguments[:2] == ["go", "run"],
+                    "lint": arguments[0].endswith("conformance-golangci.sh"),
+                }
+                if selected[step]:
+                    raise RuntimeError(f"synthetic {step} failure")
                 return ""
 
             with patch(
@@ -138,7 +152,14 @@ class ResultTests(unittest.TestCase):
                     )
             self.assertFalse(report["passed"])
             self.assertTrue(report["database"]["removed"])
-            self.assertIn("synthetic test failure", report["errors"])
+            self.assertIn(f"synthetic {step} failure", report["errors"])
+            if step != "test":
+                self.assertFalse(
+                    any(
+                        call.args[0][:2] == ["go", "test"]
+                        for call in commands.call_args_list
+                    )
+                )
             self.assertTrue(
                 any(
                     call.args[0]
