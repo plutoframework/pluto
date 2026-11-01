@@ -1,4 +1,4 @@
-"""Deterministic merge policy. AI output never waives human approval."""
+"""Deterministic gates for independent Steward review and merging."""
 
 from pathlib import PurePosixPath
 import re
@@ -27,7 +27,11 @@ CHECK_SCHEMA = 2
 
 
 def human_reasons(repository, files):
-    """Use both rename paths; reject incomplete or suspicious file inventories."""
+    """Classify sensitive changes, without requiring a separate human approval.
+
+    The legacy name remains for callers. Validate both rename paths and reject
+    incomplete or suspicious inventories regardless of risk classification.
+    """
     if repository not in REPOSITORIES or not files:
         raise ValueError("Unknown repository or empty changed-file inventory")
     reasons = set()
@@ -106,7 +110,11 @@ def review_value(value):
 
 
 def review_blockers(result, maintainer=False):
-    """Only explicit, complete, low-risk reviews qualify for automation."""
+    """Require an explicit clean decision; approvals cannot waive any blocker.
+
+    ``maintainer`` is retained for compatibility, but never changes the result.
+    Intrinsic risk is recorded separately from findings and security concerns.
+    """
     if not isinstance(result, dict):
         return ["Missing structured review"]
     review = result.get("review")
@@ -117,15 +125,9 @@ def review_blockers(result, maintainer=False):
     for key in ("files_not_reviewed", "files_partially_reviewed"):
         if coverage.get(key) != []:
             blockers.append("Incomplete review coverage: " + key)
-    if review_value(review.get("risk_level")) not in (
-        {"low", "medium", "high"} if maintainer else {"low"}
-    ):
-        blockers.append("Review risk is not explicitly low")
-    if review_value(review.get("merge_recommendation")) not in (
-        {"no_concerns_found", "needs_review"}
-        if maintainer
-        else {"no_concerns_found"}
-    ):
+    if review_value(review.get("risk_level")) not in {"low", "medium", "high"}:
+        blockers.append("Review risk is missing or invalid")
+    if review_value(review.get("merge_recommendation")) != "no_concerns_found":
         blockers.append("Review does not explicitly recommend merging")
     if review.get("key_issues_to_review") != []:
         blockers.append("Review has findings or a missing findings list")

@@ -3,7 +3,6 @@
 import json
 import os
 from pathlib import Path
-import re
 import sys
 import tempfile
 
@@ -15,7 +14,6 @@ from policy import (
     REPOSITORIES,
     REVIEW_CHECK,
     SECURITY_WORKFLOW,
-    human_approval,
     human_reasons,
     review_blockers,
     review_value,
@@ -142,23 +140,6 @@ def requests_changes(result):
     )
 
 
-def qualified_reviewers(api, prefix, reviews):
-    allowed = set()
-    for login in sorted(
-        {(r.get("user") or {}).get("login") for r in reviews} - {None}
-    ):
-        if login == os.environ["BOT_LOGIN"]:
-            continue
-        if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9-]{0,38}", login):
-            continue
-        permission = api.request(f"{prefix}/collaborators/{login}/permission")[
-            "permission"
-        ]
-        if permission in {"admin", "maintain"}:
-            allowed.add(login)
-    return allowed
-
-
 def process(api, repository, number, fresh=False):
     prefix = f"/repos/{ORG}/{repository}"
     pr = api.request(f"{prefix}/pulls/{number}")
@@ -176,14 +157,17 @@ def process(api, repository, number, fresh=False):
         "action_required",
         "Reevaluating all policy gates for the current revision.",
     )
-    if pr["user"]["login"] == os.environ["BOT_LOGIN"]:
+    if (
+        pr["user"]["login"] == os.environ["BOT_LOGIN"]
+        or pr["user"].get("type") != "User"
+    ):
         check(
             api,
             prefix,
             REVIEW_CHECK,
             head,
             "skipped",
-            "Steward must not author PRs. A contributor must submit this change; no model call was made.",
+            "Steward and bot-authored PRs cannot receive independent approval from this controller; no model call was made.",
         )
         check(
             api,
@@ -191,13 +175,12 @@ def process(api, repository, number, fresh=False):
             GATE_CHECK,
             head,
             "action_required",
-            "PRs authored by Steward are outside the reviewer's role and cannot be approved or merged by it.",
+            "Steward-authored, bot-authored or unknown-author PRs cannot be approved or merged by this controller.",
         )
         return
     files = inventory(api, prefix, pr)
-    reasons = human_reasons(repository, files)
-    if any(not file.get("patch") for file in files):
-        reasons.append("binary or omitted file diff")
+    # Preserve inventory validation; sensitive categories require no extra voter.
+    human_reasons(repository, files)
     result = None if fresh else previous_result(api, prefix, pr, app_id)
     if result is REVIEW_UNAVAILABLE:
         check(
@@ -279,15 +262,9 @@ def process(api, repository, number, fresh=False):
             evidence,
         )
     reviews = api.pages(f"{prefix}/pulls/{number}/reviews")
-    approver = human_approval(
-        reviews,
-        head,
-        pr["user"]["login"],
-        qualified_reviewers(api, prefix, reviews),
-    )
-    blockers = review_blockers(result, maintainer=bool(approver))
-    if reasons and not approver:
-        blockers.append("Maintainer approval required: " + ", ".join(reasons))
+    blockers = review_blockers(result)
+    if any(not file.get("patch") for file in files):
+        blockers.append("Unassessed coverage: binary or omitted file diff")
     blockers.extend(workflows_ready(api, prefix, pr, repository))
     # Never dismiss or ignore a human's outstanding request for changes.
     latest = {}
@@ -346,12 +323,8 @@ def process(api, repository, number, fresh=False):
         GATE_CHECK,
         head,
         "success",
-        "All checks passed; "
-        + (
-            "maintainer approved."
-            if approver
-            else "routine change qualifies for automatic approval."
-        ),
+        "Complete clean Astra review and current CI/security proofs passed; "
+        "Steward may independently approve and merge.",
     )
     if steward_review_state(reviews, head) != "APPROVED":
         api.request(
@@ -359,7 +332,7 @@ def process(api, repository, number, fresh=False):
             {
                 "event": "APPROVE",
                 "commit_id": head,
-                "body": "Pluto policy passed for this commit: complete Astra review, CI/security checks, and required maintainer approval.",
+                "body": "Pluto policy passed for this commit: complete clean Astra review and current CI/security checks.",
             },
         )
 

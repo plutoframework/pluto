@@ -25,7 +25,7 @@ class FakeAPI:
                 "ref": "main",
                 "repo": {"full_name": "plutoframework/pluto-core"},
             },
-            "user": {"login": "author"},
+            "user": {"login": "author", "type": "User"},
             "html_url": "https://github.com/plutoframework/pluto-core/pull/7",
             "changed_files": 1,
             "mergeable": True,
@@ -101,7 +101,7 @@ class FakeAPI:
                     "event": "pull_request",
                     "head_sha": self.pr["head"]["sha"],
                     "path": ".github/workflows/" + file,
-                    "repository": {"full_name": "plutoframework/pluto-core"},
+                    "repository": self.pr["base"]["repo"],
                     "conclusion": "success" if self.runs_succeed else "failure",
                 }
             ]
@@ -124,7 +124,10 @@ class ControllerTests(unittest.TestCase):
         self.api = FakeAPI()
 
     def run_gate(self, review=None):
-        with patch("controller.run_review", return_value=review or CLEAN):
+        with patch(
+            "controller.run_review",
+            return_value=CLEAN if review is None else review,
+        ):
             process(self.api, "pluto-core", 7)
 
     def test_clean_routine_change_merges(self):
@@ -152,15 +155,68 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(self.api.merged)
         self.assertFalse(self.api.auto_enabled)
 
-    def test_sensitive_file_does_not_merge_without_human(self):
-        self.api.files = [{"filename": "crypto.go"}]
-        self.run_gate()
-        self.assertFalse(self.api.merged)
-        self.assertFalse(self.api.auto_enabled)
-        self.assertEqual(self.api.checks[-1]["conclusion"], "action_required")
+    def test_clean_sensitive_changes_merge_without_a_human_approval(self):
+        for risk in ("low", "medium", "high"):
+            for path in ("crypto.go", "go.mod", ".github/workflows/ci.yml"):
+                with self.subTest(risk=risk, path=path):
+                    self.api = FakeAPI()
+                    self.api.files = [{"filename": path, "patch": "@@ code"}]
+                    result = copy.deepcopy(CLEAN)
+                    result["review"]["risk_level"] = risk
+                    self.run_gate(result)
+                    self.assertTrue(self.api.merged)
+                    self.assertEqual(len(self.api.reviews), 1)
+                    self.assertEqual(self.api.reviews[0]["state"], "APPROVED")
 
-    def test_sensitive_change_with_current_human_approval_merges(self):
-        self.api.files = [{"filename": "crypto.go"}]
+    def test_clean_auth_and_rbac_reviews_merge_independently(self):
+        for repository in ("pluto-auth", "pluto-rbac"):
+            with self.subTest(repository=repository):
+                self.api = FakeAPI()
+                self.api.pr["base"]["repo"]["full_name"] = (
+                    "plutoframework/" + repository
+                )
+                result = copy.deepcopy(CLEAN)
+                result["review"]["risk_level"] = "high"
+                with patch("controller.run_review", return_value=result):
+                    process(self.api, repository, 7)
+                self.assertTrue(self.api.merged)
+                self.assertEqual(self.api.reviews[-1]["state"], "APPROVED")
+
+    def test_human_or_steward_approval_cannot_waive_an_unresolved_review(self):
+        for login in ("owner", "bot"):
+            for section, field, value in (
+                ("review", "merge_recommendation", "needs_review"),
+                ("review", "merge_recommendation", "changes_required"),
+                ("review", "risk_level", "unknown"),
+                ("review", "key_issues_to_review", [{"issue": "bug"}]),
+                ("review", "security_concerns", "Possible resource bypass"),
+                ("coverage", "files_not_reviewed", ["crypto.go"]),
+                ("coverage", "files_partially_reviewed", ["crypto.go"]),
+            ):
+                with self.subTest(login=login, field=field):
+                    self.api = FakeAPI()
+                    self.api.files = [
+                        {"filename": "crypto.go", "patch": "@@ code"}
+                    ]
+                    self.api.reviews = [
+                        {
+                            "id": 1,
+                            "user": {"login": login, "type": "User"},
+                            "state": "APPROVED",
+                            "commit_id": "head",
+                        }
+                    ]
+                    result = copy.deepcopy(CLEAN)
+                    result[section][field] = value
+                    self.run_gate(result)
+                    self.assertFalse(self.api.merged)
+                    self.assertFalse(self.api.auto_enabled)
+                    self.assertEqual(
+                        self.api.checks[-1]["conclusion"], "action_required"
+                    )
+
+    def test_unassessed_file_coverage_is_not_waived_by_human_approval(self):
+        self.api.files = [{"filename": "image.bin"}]
         self.api.reviews = [
             {
                 "id": 1,
@@ -169,29 +225,37 @@ class ControllerTests(unittest.TestCase):
                 "commit_id": "head",
             }
         ]
-        result = copy.deepcopy(CLEAN)
-        result["review"]["risk_level"] = "high"
-        result["review"]["merge_recommendation"] = "needs_review"
-        self.run_gate(result)
-        self.assertTrue(self.api.merged)
-
-    def test_steward_account_approval_never_counts_as_human_approval(self):
-        self.api.files = [{"filename": "crypto.go", "patch": "@@ code"}]
-        self.api.reviews = [
-            {
-                "id": 1,
-                "user": {"login": "bot", "type": "User"},
-                "state": "APPROVED",
-                "commit_id": "head",
-            }
-        ]
         self.run_gate()
         self.assertFalse(self.api.merged)
-        self.assertFalse(self.api.auto_enabled)
         self.assertIn(
-            "Maintainer approval required",
-            self.api.checks[-1]["output"]["summary"],
+            "Unassessed coverage", self.api.checks[-1]["output"]["summary"]
         )
+
+    def test_missing_or_malformed_review_never_merges(self):
+        for result in (None, {}, [], {"review": {}}, {"coverage": {}}):
+            with self.subTest(result=result):
+                self.api = FakeAPI()
+                with patch("controller.run_review", return_value=result):
+                    process(self.api, "pluto-core", 7)
+                self.assertFalse(self.api.merged)
+                self.assertFalse(self.api.auto_enabled)
+
+    def test_other_bot_or_unknown_author_never_spends_review_tokens(self):
+        for author in (
+            {"login": "dependency-bot", "type": "Bot"},
+            {"login": "unknown"},
+        ):
+            with self.subTest(author=author):
+                self.api = FakeAPI()
+                self.api.pr["user"] = author
+                with patch(
+                    "controller.run_review", return_value=CLEAN
+                ) as model:
+                    process(self.api, "pluto-core", 7)
+                model.assert_not_called()
+                self.assertFalse(self.api.merged)
+                self.assertFalse(self.api.auto_enabled)
+                self.assertEqual(self.api.reviews, [])
 
     def test_human_change_request_remains_blocking(self):
         self.api.reviews = [
@@ -222,7 +286,7 @@ class ControllerTests(unittest.TestCase):
                 "commit_id": "head",
             }
         ]
-        with patch("controller.run_review") as model:
+        with patch("controller.run_review", return_value=CLEAN) as model:
             process(self.api, "pluto-core", 7)
         model.assert_not_called()
         self.assertFalse(self.api.merged)
@@ -231,7 +295,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_steward_authored_pr_never_spends_review_tokens(self):
         self.api.pr["user"]["login"] = "bot"
-        with patch("controller.run_review") as model:
+        with patch("controller.run_review", return_value=CLEAN) as model:
             process(self.api, "pluto-core", 7)
         model.assert_not_called()
         self.assertFalse(self.api.merged)
@@ -256,7 +320,7 @@ class ControllerTests(unittest.TestCase):
         self.api.runs_succeed = False
         self.run_gate()
         self.api.runs_succeed = True
-        with patch("controller.run_review") as model:
+        with patch("controller.run_review", return_value=CLEAN) as model:
             process(self.api, "pluto-core", 7)
         model.assert_not_called()
         self.assertTrue(self.api.merged)
@@ -271,7 +335,9 @@ class ControllerTests(unittest.TestCase):
                 )
                 self.api.checks = [review_check]
                 review_check["conclusion"] = conclusion
-                with patch("controller.run_review") as model:
+                with patch(
+                    "controller.run_review", return_value=CLEAN
+                ) as model:
                     process(self.api, "pluto-core", 7)
                 model.assert_not_called()
                 self.assertFalse(self.api.merged)
@@ -305,7 +371,7 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.api.reviews[-1]["state"], "CHANGES_REQUESTED")
         self.assertFalse(self.api.merged)
         self.assertFalse(self.api.auto_enabled)
-        with patch("controller.run_review") as model:
+        with patch("controller.run_review", return_value=CLEAN) as model:
             process(self.api, "pluto-core", 7)
         model.assert_not_called()
         self.assertEqual(len(self.api.reviews), 1)
