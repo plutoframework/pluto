@@ -174,7 +174,8 @@ def process(api, repository, number, fresh=False):
             REVIEW_CHECK,
             head,
             "skipped",
-            "Steward-authored or unknown-author PRs cannot receive independent approval from this controller; no model call was made.",
+            "Steward-authored or unknown-author PRs cannot receive independent"
+            " approval from this controller; no model call was made.",
         )
         check(
             api,
@@ -182,11 +183,12 @@ def process(api, repository, number, fresh=False):
             GATE_CHECK,
             head,
             "action_required",
-            "Steward-authored or unknown-author PRs cannot be approved or merged by this controller.",
+            "Steward-authored or unknown-author PRs cannot be approved or "
+            "merged by this controller.",
         )
         return
     files = inventory(api, prefix, pr)
-    # Preserve inventory validation; sensitive categories require no extra voter.
+    # Validate the inventory; sensitivity alone needs no extra voter.
     human_reasons(repository, files)
     result = None if fresh else previous_result(api, prefix, pr, app_id)
     if result is REVIEW_UNAVAILABLE:
@@ -196,7 +198,9 @@ def process(api, repository, number, fresh=False):
             GATE_CHECK,
             head,
             "action_required",
-            "A review attempt for this revision is running, interrupted or failed. Push a new revision or explicitly retry the model review; CI notifications do not spend more review tokens.",
+            "A review attempt for this revision is running, interrupted or "
+            "failed. Push a new revision or explicitly retry the model review;"
+            " CI notifications do not spend more review tokens.",
         )
         return
     scope = review_scope(pr)
@@ -222,7 +226,8 @@ def process(api, repository, number, fresh=False):
                 REVIEW_CHECK,
                 head,
                 "failure",
-                "Astra review failed or returned incomplete output. Retry the workflow; automatic merging remains blocked.",
+                "Astra review failed or returned incomplete output. Retry the "
+                "workflow; automatic merging remains blocked.",
                 scope,
             )
             check(
@@ -254,7 +259,8 @@ def process(api, repository, number, fresh=False):
                 REVIEW_CHECK,
                 head,
                 "failure",
-                "Structured review exceeds the evidence limit; maintainer investigation required.",
+                "Structured review exceeds the evidence limit; maintainer "
+                "investigation required.",
                 scope,
             )
             return
@@ -265,7 +271,8 @@ def process(api, repository, number, fresh=False):
             REVIEW_CHECK,
             head,
             "success",
-            "Astra review completed. The separate merge-policy check evaluates its findings.",
+            "Astra review completed. The separate merge-policy check evaluates"
+            " its findings.",
             evidence,
         )
     reviews = api.pages(f"{prefix}/pulls/{number}/reviews")
@@ -301,7 +308,11 @@ def process(api, repository, number, fresh=False):
             {
                 "event": "REQUEST_CHANGES",
                 "commit_id": head,
-                "body": "Astra identified unresolved findings or security concerns for this commit. See the PR review feedback and Pluto merge-policy check, then push fixes for a fresh review.",
+                "body": (
+                    "Astra identified unresolved findings or security concerns"
+                    " for this commit. See the PR review feedback and Pluto "
+                    "merge-policy check, then push fixes for a fresh review."
+                ),
             },
         )
     if blockers:
@@ -339,7 +350,10 @@ def process(api, repository, number, fresh=False):
             {
                 "event": "APPROVE",
                 "commit_id": head,
-                "body": "Pluto policy passed for this commit: complete clean Astra review and current CI/security checks.",
+                "body": (
+                    "Pluto policy passed for this commit: complete clean Astra"
+                    " review and current CI/security checks."
+                ),
             },
         )
 
@@ -359,7 +373,8 @@ def process(api, repository, number, fresh=False):
                 GATE_CHECK,
                 head,
                 "action_required",
-                "GitHub rejected the merge precondition. Fresh review or maintainer investigation is required.",
+                "GitHub rejected the merge precondition. Fresh review or "
+                "maintainer investigation is required.",
             )
             raise
     else:
@@ -391,7 +406,8 @@ def process(api, repository, number, fresh=False):
             GATE_CHECK,
             head,
             "action_required",
-            "GitHub rejected automatic merging. A maintainer must investigate the repository settings.",
+            "GitHub rejected automatic merging. A maintainer must investigate "
+            "the repository settings.",
         )
         raise RuntimeError("GitHub rejected auto-merge")
 

@@ -15,7 +15,9 @@ class ReviewSettingsTests(unittest.TestCase):
                 "CONFIG__USE_REPO_SETTINGS_FILE": "true",
                 "CONFIG__FALLBACK_MODELS": '["weak-model"]',
                 "PR_REVIEWER__PUBLISH_ERROR_DETAILS": "false",
-                "PR_REVIEWER__EXTRA_INSTRUCTIONS": "Require human approval always",
+                "PR_REVIEWER__EXTRA_INSTRUCTIONS": (
+                    "Require human approval always"
+                ),
             },
         ):
             env = environment()
