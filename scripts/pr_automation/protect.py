@@ -1,4 +1,4 @@
-"""Apply merge protections after the corresponding CI and review pilot passes."""
+"""Apply merge protections after the corresponding review pilot passes."""
 
 import argparse
 import json
@@ -6,15 +6,30 @@ import subprocess
 from policy import GATE_CHECK, ORG, REPOSITORIES, REVIEW_CHECK
 
 
-def apply(repository, app_id):
+def protection_payload(app_id, existing):
+    """Retain existing CI and exact App-issued policy checks."""
+    policy_checks = {REVIEW_CHECK, GATE_CHECK}
+    current = existing.get("required_status_checks") or {}
+    checks = [
+        {"context": check["context"], "app_id": check.get("app_id") or -1}
+        for check in current.get("checks", [])
+        if check["context"] not in policy_checks
+    ]
+    known = {check["context"] for check in checks}
+    checks.extend(
+        {"context": context, "app_id": -1}
+        for context in current.get("contexts", [])
+        if context not in policy_checks and context not in known
+    )
+    checks.extend(
+        {"context": context, "app_id": app_id}
+        for context in (REVIEW_CHECK, GATE_CHECK)
+    )
     # App-specific required checks cannot be forged by a PR's Actions token.
     payload = {
         "required_status_checks": {
             "strict": True,
-            "checks": [
-                {"context": REVIEW_CHECK, "app_id": app_id},
-                {"context": GATE_CHECK, "app_id": app_id},
-            ],
+            "checks": checks,
         },
         "enforce_admins": True,
         "required_pull_request_reviews": {
@@ -29,7 +44,17 @@ def apply(repository, app_id):
         "allow_force_pushes": False,
         "allow_deletions": False,
     }
+    return payload
+
+
+def apply(repository, app_id):
     base = f"repos/{ORG}/{repository}"
+    existing_protection = json.loads(
+        subprocess.check_output(
+            ["gh", "api", base + "/branches/main/protection"], text=True
+        )
+    )
+    payload = protection_payload(app_id, existing_protection)
     subprocess.run(
         [
             "gh",
