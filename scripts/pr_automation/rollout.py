@@ -9,6 +9,7 @@ from policy import ORG, REPOSITORIES, human_reasons
 ROOT = Path(__file__).resolve().parents[2]
 CHECKOUT = "d23441a48e516b6c34aea4fa41551a30e30af803"
 GO = "924ae3a1cded613372ab5595356fb5720e22ba16"
+OWNER_LOGINS = "@DavidHoenisch @jackbot-advrsty"
 NODE = "249970729cb0ef3589644e2896645e5dc5ba9c38"
 PYTHON = "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0"
 
@@ -115,7 +116,10 @@ jobs:
 
 def codeowners(repository, root):
     if repository in {"pluto-auth", "pluto-rbac"}:
-        return "# Authentication and authorization always require a maintainer.\n* @DavidHoenisch\n"
+        return (
+            "# Independent owner approval is required for every change.\n"
+            + "* " + OWNER_LOGINS + "\n"
+        )
     patterns = {
         "/.github/",
         "/scripts/",
@@ -153,7 +157,7 @@ def codeowners(repository, root):
             patterns.add("/" + path.replace(" ", "\\ "))
     return (
         "# Native owner approval complements the Pluto merge-policy check.\n"
-        + "".join(p + " @DavidHoenisch\n" for p in sorted(patterns))
+        + "".join(p + " " + OWNER_LOGINS + "\n" for p in sorted(patterns))
     )
 
 
