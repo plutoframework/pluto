@@ -4,251 +4,262 @@ import (
 	"context"
 	"errors"
 	"os"
-	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	auth "github.com/plutoframework/pluto-auth"
+	authmemory "github.com/plutoframework/pluto-auth/stores/memory"
+	cachememory "github.com/plutoframework/pluto-core/cache/memory"
 	"github.com/plutoframework/pluto-core/examples/shipments"
-	shipmentpostgres "github.com/plutoframework/pluto-core/examples/shipments/postgres"
+	data "github.com/plutoframework/pluto-core/examples/shipments/postgres"
+	"github.com/plutoframework/pluto-core/examples/shipments/postgres/contract"
+	"github.com/plutoframework/pluto-core/examples/shipments/postgres/operations"
 	"github.com/plutoframework/pluto-core/state"
+	idem "github.com/plutoframework/pluto-core/stores/postgres"
+	jobs "github.com/plutoframework/pluto-jobs"
 	rbac "github.com/plutoframework/pluto-rbac"
+	identitygate "github.com/plutoframework/pluto-rbac/identity"
 )
 
-const dispatch rbac.PermissionID = "shipments:dispatch"
-
-type caller struct {
-	actor  string
-	tenant string
-}
-type change = state.Evaluated[shipments.Status, shipments.Event]
-
-// The private application port requires both opaque contracts. Entry adapters
-// receive an operation, never its concrete writer or database pool.
-type writePort interface {
-	commit(context.Context, *rbac.Execution, string, change) error
-}
-type guardedWriter struct {
-	requirement *rbac.Requirement
-	concrete    *shipmentpostgres.Writer
+// Only composition holds the issuer and concrete adapter. The application entry
+// takes an opaque identity and the operation's private writer is a narrow port.
+type dispatchOperation struct {
+	gate    *identitygate.Gate
+	data    contract.DispatchData
+	machine *state.Machine[shipments.Status, shipments.Event, bool]
 }
 
-func (w *guardedWriter) commit(ctx context.Context, execution *rbac.Execution, actor string, evaluated change) error {
-	binding := evaluated.Binding()
-	return w.requirement.Use(ctx, execution, actor, rbac.Scope{TenantID: binding.Scope}, binding.Entity, func(ctx context.Context) error {
-		return w.concrete.CommitDispatch(ctx, evaluated)
+func (o *dispatchOperation) execute(ctx context.Context, identity *auth.Identity, tenant, rawID, key string) (contract.Result, error) {
+	input, err := shipments.NewDispatchInput(rawID, key)
+	if err != nil {
+		return contract.Result{}, err
+	}
+	var result contract.Result
+	err = o.gate.Within(ctx, identity, tenant, input.ID(), func(ctx context.Context, execution *identitygate.Execution) error {
+		var err error
+		result, err = operations.Dispatch(ctx, execution, o.data, o.machine, input)
+		return err
 	})
-}
-
-type operation struct {
-	requirement *rbac.Requirement
-	lifecycle   *state.Machine[shipments.Status, shipments.Event, bool]
-	writer      writePort
-}
-
-func (o *operation) execute(ctx context.Context, who caller, loaded shipments.Snapshot) error {
-	return o.requirement.Within(ctx, who.actor, rbac.Scope{TenantID: who.tenant}, loaded.ID, func(ctx context.Context, execution *rbac.Execution) error {
-		evaluated, err := o.lifecycle.Evaluate(loaded.Binding(), shipments.Dispatch, loaded.AddressVerified)
-		if err != nil {
-			return err
-		}
-		return o.writer.commit(ctx, execution, who.actor, evaluated)
-	})
+	return result, err
 }
 
 type fixture struct {
 	pool      *pgxpool.Pool
-	operation *operation
-	writer    *guardedWriter
-	roles     []rbac.RoleID
+	manager   *auth.Manager
+	tokens    map[string]string
+	gate      *identitygate.Gate
+	data      *data.Data
+	operation *dispatchOperation
+	clock     atomic.Int64
+	allowed   atomic.Bool
 }
 
-func mustPolicy(t *testing.T) *rbac.Policy {
+func manager(t *testing.T, clock func() time.Time) *auth.Manager {
 	t.Helper()
-	policy, err := rbac.New(rbac.Definition{
-		Permissions: []rbac.Permission{
-			{ID: dispatch, Name: "Dispatch", Description: "Dispatch shipments"},
-		},
-		Roles: []rbac.Role{
-			{ID: "dispatcher", Name: "Dispatcher", Description: "Dispatch shipments", Permissions: []rbac.PermissionID{dispatch}},
-		},
-	})
+	store, err := authmemory.New(20)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return policy
+	issuer, err := auth.New(store, auth.Config{TTL: time.Hour, Clock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return issuer
 }
 func setup(t *testing.T) *fixture {
 	t.Helper()
 	url := os.Getenv("PLUTO_OPERATION_DATABASE_URL")
 	if url == "" {
-		t.Fatal("isolated database URL required; skips forbidden")
+		t.Fatal("isolated database required; skips forbidden")
 	}
-	ctx := t.Context()
-	pool, err := pgxpool.New(ctx, url)
+	admin, err := pgxpool.New(t.Context(), url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	name := "composed_" + jobs.NewID()
+	quoted := pgx.Identifier{name}.Sanitize()
+	if _, err := admin.Exec(t.Context(), "CREATE SCHEMA "+quoted); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, err := admin.Exec(context.Background(), "DROP SCHEMA "+quoted+" CASCADE")
+		if err != nil {
+			t.Error(err)
+		}
+	})
+	config, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ConnConfig.RuntimeParams["search_path"] = name
+	pool, err := pgxpool.NewWithConfig(t.Context(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	if _, err = pool.Exec(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"+shipmentpostgres.Schema); err != nil {
+	if _, err := pool.Exec(t.Context(), data.Schema+data.DeliverySchema+idem.Schema); err != nil {
+		t.Fatal(err)
+	}
+	f := &fixture{pool: pool, tokens: map[string]string{}}
+	f.clock.Store(time.Now().UnixNano())
+	f.allowed.Store(true)
+	f.manager = manager(t, func() time.Time { return time.Unix(0, f.clock.Load()) })
+	for _, subject := range []string{"alice", "bob"} {
+		issued, err := f.manager.Start(t.Context(), subject)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.tokens[subject] = issued.Token
+	}
+	policy, err := rbac.New(rbac.Definition{
+		Permissions: []rbac.Permission{{ID: "shipments", Name: "Shipments", Description: "Operate shipments"}},
+		Roles:       []rbac.Role{{ID: "operator", Name: "Operator", Description: "Operate shipments", Permissions: []rbac.PermissionID{"shipments"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer, err := rbac.NewAuthorizer(policy, rbac.RoleResolverFunc(func(_ context.Context, subject string, scope rbac.Scope) ([]rbac.RoleID, error) {
+		if !f.allowed.Load() || scope.TenantID != "north" {
+			return nil, nil
+		}
+		return []rbac.RoleID{"operator"}, nil
+	}), rbac.Options{RequireTenant: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	permission, err := authorizer.Require("shipments")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := permission.WithResourcePolicy(rbac.ResourcePolicyFunc(func(ctx context.Context, request rbac.Request, key string) error {
+		if request.Scope.TenantID != "north" {
+			return rbac.ErrForbidden
+		}
+		if key == data.CollectionResource {
+			return nil
+		}
+		var visible bool
+		err := pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM shipment_visibility WHERE tenant_id=$1 AND shipment_id=$2 AND subject_id=$3)", request.Scope.TenantID, key, request.SubjectID).Scan(&visible)
+		if err != nil {
+			return err
+		}
+		if !visible {
+			return rbac.ErrForbidden
+		}
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.gate, err = identitygate.New(f.manager, resource, identitygate.MembershipVerifierFunc(func(_ context.Context, subject, tenant string) error {
+		if tenant != "north" || (subject != "alice" && subject != "bob") {
+			return rbac.ErrForbidden
+		}
+		return nil
+	}))
+	if err != nil {
 		t.Fatal(err)
 	}
 	machine, err := shipments.NewLifecycle()
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fixture{pool: pool, roles: []rbac.RoleID{"dispatcher"}}
-	resolver := rbac.RoleResolverFunc(func(_ context.Context, actor string, scope rbac.Scope) ([]rbac.RoleID, error) {
-		if actor != "alice" || scope.TenantID != "north" {
-			return nil, nil
-		}
-		return f.roles, nil
-	})
-	requirement := newRequirement(t, resolver)
-	concrete, err := shipmentpostgres.New(pool, machine)
+	memory, err := cachememory.New(cachememory.DefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.writer = &guardedWriter{requirement: requirement, concrete: concrete}
-	f.operation = &operation{requirement: requirement, lifecycle: machine, writer: f.writer}
-	for _, tenant := range []string{"north", "south"} {
-		for _, id := range []string{"one", "two"} {
-			if _, err := pool.Exec(ctx, "INSERT INTO shipments VALUES ($1,$2,'packed',0,true)", tenant, id); err != nil {
-				t.Fatal(err)
-			}
-		}
+	f.data, err = data.NewData(pool, f.gate, machine, memory, data.DataConfig{App: "composed", Environment: "test", CacheTTL: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.operation = &dispatchOperation{gate: f.gate, data: f.data, machine: machine}
+	if _, err := pool.Exec(t.Context(), "INSERT INTO shipments VALUES ('north','one','packed',0,true),('north','hidden','packed',0,true); INSERT INTO shipment_visibility VALUES ('north','one','alice')"); err != nil {
+		t.Fatal(err)
 	}
 	return f
 }
-func newRequirement(t *testing.T, resolver rbac.RoleResolver) *rbac.Requirement {
+func (f *fixture) within(t *testing.T, actor, resource string, run func(context.Context, *identitygate.Execution) error) error {
 	t.Helper()
-	authorizer, err := rbac.NewAuthorizer(mustPolicy(t), resolver, rbac.Options{RequireTenant: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	requirement, err := authorizer.Require(dispatch)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return requirement
+	return f.manager.WithIdentity(t.Context(), f.tokens[actor], func(ctx context.Context, identity *auth.Identity) error {
+		return f.gate.Within(ctx, identity, "north", resource, run)
+	})
 }
-func snapshot(tenant, id string) shipments.Snapshot {
-	return shipments.Snapshot{TenantID: tenant, ID: id, Status: shipments.Packed, Version: 0, AddressVerified: true}
-}
-func (f *fixture) evaluate(t *testing.T, tenant, id string) change {
+func (f *fixture) dispatch(t *testing.T, key string) (contract.Result, error) {
 	t.Helper()
-	evaluated, err := f.operation.lifecycle.Evaluate(snapshot(tenant, id).Binding(), shipments.Dispatch, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return evaluated
+	var result contract.Result
+	err := f.manager.WithIdentity(t.Context(), f.tokens["alice"], func(ctx context.Context, identity *auth.Identity) error {
+		var err error
+		result, err = f.operation.execute(ctx, identity, "north", " one ", key)
+		return err
+	})
+	return result, err
 }
-func assertRows(t *testing.T, f *fixture, status string, version int64, intents int) {
+func assertCounts(t *testing.T, f *fixture, writes int) {
 	t.Helper()
-	var got string
-	var gotVersion int64
-	var gotIntents int
-	if err := f.pool.QueryRow(t.Context(), "SELECT status,version FROM shipments WHERE tenant_id='north' AND id='one'").Scan(&got, &gotVersion); err != nil {
+	for _, table := range []string{"shipment_dispatch_outbox", "pluto_jobs"} {
+		var count int
+		if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+table).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != writes {
+			t.Fatalf("%s rows=%d want=%d", table, count, writes)
+		}
+	}
+	var count int
+	if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM pluto_idempotency WHERE completed").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM shipment_dispatch_outbox").Scan(&gotIntents); err != nil {
-		t.Fatal(err)
-	}
-	if got != status || gotVersion != version || gotIntents != intents {
-		t.Fatalf("rows status=%s version=%d intents=%d", got, gotVersion, gotIntents)
+	if count != writes {
+		t.Fatalf("completed claims=%d", count)
 	}
 }
-func TestComposedPermissionBoundary(t *testing.T) {
+func TestComposedNormalizedDispatch(t *testing.T) {
 	f := setup(t)
-	ctx := t.Context()
-	evaluated := f.evaluate(t, "north", "one")
-	for _, execution := range []*rbac.Execution{nil, {}} {
-		if err := f.writer.commit(ctx, execution, "alice", evaluated); !errors.Is(err, rbac.ErrForbidden) {
-			t.Fatalf("ungated write=%v", err)
-		}
+	if _, err := operations.Dispatch(t.Context(), nil, f.data, f.operation.machine, shipments.DispatchInput{}); !errors.Is(err, shipments.ErrInput) {
+		t.Fatalf("zero private input=%v", err)
 	}
-	var escaped *rbac.Execution
-	err := f.operation.requirement.Within(ctx, "alice", rbac.Scope{TenantID: "north"}, "one", func(ctx context.Context, execution *rbac.Execution) error {
-		escaped = execution
-		for _, wrong := range []change{f.evaluate(t, "south", "one"), f.evaluate(t, "north", "two")} {
-			if err := f.writer.commit(ctx, execution, "alice", wrong); !errors.Is(err, rbac.ErrForbidden) {
-				t.Fatalf("cross-binding=%v", err)
-			}
+	first, err := f.dispatch(t, "normalized-command")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ShipmentID != "one" || first.Status != shipments.Dispatched || first.Version != 1 || first.JobID == "" {
+		t.Fatalf("result=%+v", first)
+	}
+	replay, err := f.dispatch(t, "normalized-command")
+	if err != nil || replay != first {
+		t.Fatalf("replay=%+v error=%v", replay, err)
+	}
+	assertCounts(t, f, 1)
+}
+
+// Keep the interface check near the composition that chooses the adapter.
+var _ contract.DispatchData = (*data.Data)(nil)
+
+func TestComposedExport500Cap(t *testing.T) {
+	f := setup(t)
+	// With the preexisting visible row this creates 501 visible records. An export
+	// capped at 500 must refuse the whole result, never truncate or leak hidden rows.
+	if _, err := f.pool.Exec(t.Context(), `INSERT INTO shipments
+ SELECT 'north','bulk-'||lpad(n::text,4,'0'),'packed',0,true FROM generate_series(1,500)n;
+ INSERT INTO shipment_visibility SELECT 'north',id,'alice' FROM shipments WHERE id LIKE 'bulk-%'`); err != nil {
+		t.Fatal(err)
+	}
+	err := f.within(t, "alice", data.CollectionResource, func(ctx context.Context, execution *identitygate.Execution) error {
+		input, err := shipments.NewExportInput(500)
+		if err != nil {
+			return err
 		}
-		if err := f.writer.commit(ctx, execution, "bob", evaluated); !errors.Is(err, rbac.ErrForbidden) {
-			t.Fatalf("cross-actor=%v", err)
+		rows, err := f.data.Export(ctx, execution, input)
+		if !errors.Is(err, data.ErrExportLimit) || rows != nil {
+			t.Fatalf("500 row cap bypassed: rows=%d error=%v", len(rows), err)
 		}
-		f.roles = nil
-		if err := f.writer.commit(ctx, execution, "alice", evaluated); !errors.Is(err, rbac.ErrForbidden) {
-			t.Fatalf("revoked=%v", err)
-		}
-		f.roles = []rbac.RoleID{"dispatcher"}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.writer.commit(ctx, escaped, "alice", evaluated); !errors.Is(err, rbac.ErrForbidden) {
-		t.Fatalf("expired=%v", err)
-	}
-	foreign := newRequirement(t, rbac.RoleResolverFunc(func(context.Context, string, rbac.Scope) ([]rbac.RoleID, error) {
-		return []rbac.RoleID{"dispatcher"}, nil
-	}))
-	err = foreign.Within(ctx, "alice", rbac.Scope{TenantID: "north"}, "one", func(ctx context.Context, execution *rbac.Execution) error {
-		return f.writer.commit(ctx, execution, "alice", evaluated)
-	})
-	if !errors.Is(err, rbac.ErrForbidden) {
-		t.Fatalf("foreign execution=%v", err)
-	}
-	assertRows(t, f, "packed", 0, 0)
-	if err := f.operation.execute(ctx, caller{"alice", "south"}, snapshot("south", "one")); !errors.Is(err, rbac.ErrForbidden) {
-		t.Fatalf("denied operation=%v", err)
-	}
-	if err := f.operation.execute(ctx, caller{"alice", "north"}, snapshot("south", "one")); !errors.Is(err, rbac.ErrForbidden) {
-		t.Fatalf("mismatched loaded tenant=%v", err)
-	}
-	if err := f.operation.execute(ctx, caller{"alice", "north"}, snapshot("north", "one")); err != nil {
-		t.Fatal(err)
-	}
-	assertRows(t, f, "dispatched", 1, 1)
-}
-func TestComposedConcurrentCAS(t *testing.T) {
-	f := setup(t)
-	start := make(chan struct{})
-	results := make(chan error, 2)
-	var workers sync.WaitGroup
-	for range 2 {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			<-start
-			results <- f.operation.execute(t.Context(), caller{"alice", "north"}, snapshot("north", "one"))
-		}()
-	}
-	close(start)
-	workers.Wait()
-	close(results)
-	successes, conflicts := 0, 0
-	for err := range results {
-		if err == nil {
-			successes++
-		} else if errors.Is(err, shipmentpostgres.ErrConflict) {
-			conflicts++
-		} else {
-			t.Fatal(err)
-		}
-	}
-	if successes != 1 || conflicts != 1 {
-		t.Fatalf("successes=%d conflicts=%d", successes, conflicts)
-	}
-	assertRows(t, f, "dispatched", 1, 1)
-}
-func TestComposedOutboxRollback(t *testing.T) {
-	f := setup(t)
-	if _, err := f.pool.Exec(t.Context(), "ALTER TABLE shipment_dispatch_outbox ADD CONSTRAINT reject_intent CHECK (false)"); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.operation.execute(t.Context(), caller{"alice", "north"}, snapshot("north", "one")); err == nil {
-		t.Fatal("failed outbox insertion committed")
-	}
-	assertRows(t, f, "packed", 0, 0)
 }

@@ -10,19 +10,56 @@ import time
 import uuid
 
 
+CONSUMER = "conformance.invalid/operation"
+CORE_DATA = "github.com/plutoframework/pluto-core/examples/shipments/postgres"
+CORE_DOMAIN = "github.com/plutoframework/pluto-core/examples/shipments"
+JOBS_DATA = "github.com/plutoframework/pluto-jobs/stores/postgres"
+PACKAGES = ("./...", CORE_DATA, CORE_DOMAIN, JOBS_DATA)
 REQUIRED = {
-    "TestComposedPermissionBoundary", "TestComposedConcurrentCAS",
-    "TestComposedOutboxRollback",
+    CONSUMER + "::" + name for name in (
+        "TestComposedNormalizedDispatch", "TestComposedCurrentGateCAS",
+        "TestComposedExport500Cap",
+        "TestComposedTypedDeliveryBound", "TestComposedIdentityResourceBoundary",
+        *("TestComposedIdentityResourceBoundary/" + mode for mode in (
+            "zero", "foreign", "expired", "revoked", "cross-scope", "resource",
+            "expired-execution", "revoked-before-write",
+        )),
+    )
+} | {
+    CORE_DATA + "::" + name for name in (
+        "TestPostgresAuthorizedScopedCache",
+        "TestPostgresVisiblePaginationAndBoundedExport",
+        "TestPostgresDeclaredAtomicDispatch",
+        *("TestPostgresDeclaredAtomicDispatch/" + mode for mode in (
+            "none", "audit", "delivery", "completion", "commit",
+        )),
+        "TestPostgresAuthoritativeGuardFacts",
+        "TestPostgresConcurrentIdempotentDispatch",
+        "TestPostgresTypedDeliveryAfterCommit",
+    )
+} | {
+    CORE_DOMAIN + "::TestNormalizedPrivateInputs",
+    JOBS_DATA + "::TestDelayRetryAndCrashExhaustion",
 }
 
 
 def validate_results(output):
     events = [json.loads(line) for line in output.splitlines() if line.strip()]
-    if not all(isinstance(event, dict) and isinstance(event.get("Action"), str) for event in events):
+    if not all(isinstance(event, dict) and isinstance(event.get("Action"), str)
+               for event in events):
         raise ValueError("invalid Go test event schema")
-    if any(event.get("Action") == "skip" for event in events):
+    if any("Test" in event and (
+            not isinstance(event["Test"], str) or not event["Test"] or
+            not isinstance(event.get("Package"), str) or not event["Package"])
+           for event in events):
+        raise ValueError("invalid named Go test event schema")
+    if any(event.get("Action") == "skip" and event.get("Test")
+           for event in events):
         raise ValueError("required composition evidence skipped")
-    passed = {event.get("Test") for event in events if event.get("Action") == "pass"}
+    passed = {
+        event.get("Package", "") + "::" + event["Test"] for event in events
+        if event.get("Action") == "pass" and isinstance(event.get("Test"), str)
+    }
     if not REQUIRED <= passed:
         raise ValueError(f"missing composition evidence: {sorted(REQUIRED - passed)}")
     if any(event.get("Action") == "fail" for event in events):
@@ -76,19 +113,21 @@ def remove_owned(name, owner):
             raise
 
 
-def run(core, rbac, image="postgres:17-alpine"):
+def run(core, rbac, auth, jobs, image="postgres:17-alpine"):
     report = {
         "version": 1, "passed": False, "candidateOnly": True,
-        "coverage": "Private application composition with local candidates; no generated-release receipt adoption claim.",
+        "coverage": "Live Auth/RBAC, Core Data/operations and typed Jobs candidate composition plus upstream named SQL proofs; no generated-release adoption claim.",
         "errors": [],
     }
     container = None
     owner = uuid.uuid4().hex
     try:
         report["sources"] = {}
-        for name, directory in (("core", core), ("rbac", rbac)):
+        sources = (("core", core), ("rbac", rbac), ("auth", auth), ("jobs", jobs))
+        for name, directory in sources:
             if not (directory / "go.mod").is_file():
                 raise ValueError(f"missing {name} module")
+        for name, directory in sources:
             report["sources"][name] = {
                 "path": str(directory),
                 "revision": command(["git", "-C", str(directory), "rev-parse", "HEAD"]).strip(),
@@ -121,23 +160,44 @@ def run(core, rbac, image="postgres:17-alpine"):
         port = command(["docker", "port", container, "5432/tcp"]).strip().rsplit(":", 1)[1]
         with tempfile.TemporaryDirectory(prefix="pluto-operation-conformance-") as temporary:
             consumer = Path(temporary)
-            source = Path(__file__).with_name("consumer_test.go.txt")
-            report["fixtureSHA256"] = hashlib.sha256(source.read_bytes()).hexdigest()
-            shutil.copyfile(source, consumer / "consumer_test.go")
+            digest = hashlib.sha256()
+            report["fixtureFiles"] = []
+            for source in sorted(Path(__file__).parent.glob("*.go.txt")):
+                content = source.read_bytes()
+                digest.update(source.name.encode() + b"\0" + content)
+                report["fixtureFiles"].append({
+                    "name": source.name,
+                    "sha256": hashlib.sha256(content).hexdigest(),
+                })
+                shutil.copyfile(source, consumer / source.name.removesuffix(".txt"))
+            report["fixtureSHA256"] = digest.hexdigest()
+            report["goVersion"] = command(["go", "version"]).strip()
             environment = dict(os.environ, GOWORK="off", GOFLAGS="")
             environment["PLUTO_OPERATION_DATABASE_URL"] = (
                 f"postgres://postgres:operation-conformance@127.0.0.1:{port}/conformance?sslmode=disable"
             )
-            command(["go", "mod", "init", "conformance.invalid/operation"], cwd=consumer, env=environment)
+            environment["PLUTO_CORE_TEST_DATABASE_URL"] = environment["PLUTO_OPERATION_DATABASE_URL"]
+            environment["PLUTO_CORE_REQUIRE_DATABASE"] = "1"
+            environment["PLUTO_JOBS_TEST_DATABASE_URL"] = environment["PLUTO_OPERATION_DATABASE_URL"]
+            environment["PLUTO_JOBS_REQUIRE_DATABASE"] = "1"
+            command(["go", "mod", "init", CONSUMER], cwd=consumer, env=environment)
             for module, directory in (
                 ("github.com/plutoframework/pluto-core", core),
                 ("github.com/plutoframework/pluto-rbac", rbac),
+                ("github.com/plutoframework/pluto-rbac/identity", rbac / "identity"),
+                ("github.com/plutoframework/pluto-auth", auth),
+                ("github.com/plutoframework/pluto-jobs", jobs),
+                (JOBS_DATA, jobs / "stores/postgres"),
+                ("github.com/plutoframework/pluto-core/stores/postgres", core / "stores/postgres"),
                 ("github.com/plutoframework/pluto-core/examples/shipments/postgres", core / "examples/shipments/postgres"),
             ):
                 command(["go", "mod", "edit", f"-require={module}@v0.0.0", f"-replace={module}={directory}"], cwd=consumer, env=environment)
             command(["go", "mod", "tidy"], cwd=consumer, env=environment)
-            output = command(["go", "test", "-race", "-count=1", "-json", "./..."], cwd=consumer, env=environment)
+            report["testCommand"] = ["go", "test", "-mod=mod", "-tags", "plutocandidate",
+                                     "-race", "-count=1", "-json", *PACKAGES]
+            output = command(report["testCommand"], cwd=consumer, env=environment, timeout=300)
             report["executed"] = validate_results(output)
+            report["namedSkips"] = []
             report["passed"] = True
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         report["errors"].append(str(error))
