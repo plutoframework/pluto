@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Compose local Auth/RBAC/Core/Jobs candidates against disposable PostgreSQL only."""
+"""Compose local Auth/RBAC/Core/Jobs against disposable PostgreSQL only."""
+
 import argparse
 import json
 from pathlib import Path
@@ -16,8 +17,13 @@ def main():
     parser.add_argument("--image", default="postgres:17-alpine")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
-    report = run(args.core.resolve(), args.rbac.resolve(), args.auth.resolve(),
-                 args.jobs.resolve(), args.image)
+    report = run(
+        args.core.resolve(),
+        args.rbac.resolve(),
+        args.auth.resolve(),
+        args.jobs.resolve(),
+        args.image,
+    )
     output = json.dumps(report, indent=2) + "\n"
     if args.report:
         args.report.write_text(output)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Run framework-owned checks against the unchanged frozen negative baseline."""
+
 import argparse
 import json
 from pathlib import Path
@@ -14,8 +15,15 @@ def main():
     parser.add_argument("--require-complete", action="store_true")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args()
-    ledger = json.loads(Path(__file__).with_name("architecture-baseline.json").read_text())
-    report = run(args.cli.resolve(), args.baseline.resolve(), ledger, args.require_complete)
+    ledger = json.loads(
+        Path(__file__).with_name("architecture-baseline.json").read_text()
+    )
+    report = run(
+        args.cli.resolve(),
+        args.baseline.resolve(),
+        ledger,
+        args.require_complete,
+    )
     output = json.dumps(report, indent=2) + "\n"
     if args.report:
         args.report.write_text(output)

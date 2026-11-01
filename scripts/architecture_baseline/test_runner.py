@@ -16,29 +16,61 @@ class HarnessTests(unittest.TestCase):
         self.baseline = self.root / "baseline"
         self.baseline.mkdir()
         (self.baseline / "pluto.toml").write_text("schema = 1\n")
-        for args in (["init", "-q"], ["add", "."],
-                     ["-c", "user.name=Test", "-c", "user.email=test@example.invalid",
-                      "commit", "-qm", "baseline"]):
+        for args in (
+            ["init", "-q"],
+            ["add", "."],
+            [
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-qm",
+                "baseline",
+            ],
+        ):
             subprocess.run(["git", "-C", str(self.baseline), *args], check=True)
         revision = subprocess.check_output(
-            ["git", "-C", str(self.baseline), "rev-parse", "HEAD"], text=True,
+            ["git", "-C", str(self.baseline), "rev-parse", "HEAD"],
+            text=True,
         ).strip()
-        self.ledger = {"revision": revision, "coverage": "targeted only", "expected": [
-            {"id": "ARCH002", "file": "pluto.toml", "messageContains": "schema"},
-        ]}
+        self.ledger = {
+            "revision": revision,
+            "coverage": "targeted only",
+            "expected": [
+                {
+                    "id": "ARCH002",
+                    "file": "pluto.toml",
+                    "messageContains": "schema",
+                },
+            ],
+        }
         self.payload = {
-            "version": 1, "directory": str(self.baseline), "packages": [],
-            "diagnostics": [{"id": "ARCH002", "file": "pluto.toml", "line": 1,
-                             "severity": "error", "message": "legacy schema",
-                             "repair": "migrate explicitly"}],
-            "unassessed": ["semantic policies"], "passed": False,
+            "version": 1,
+            "directory": str(self.baseline),
+            "packages": [],
+            "diagnostics": [
+                {
+                    "id": "ARCH002",
+                    "file": "pluto.toml",
+                    "line": 1,
+                    "severity": "error",
+                    "message": "legacy schema",
+                    "repair": "migrate explicitly",
+                }
+            ],
+            "unassessed": ["semantic policies"],
+            "passed": False,
         }
 
     def tool(self, payload=None, code=1, extra=""):
         path = self.root / "cli"
         output = json.dumps(self.payload if payload is None else payload)
-        path.write_text("#!/usr/bin/env python3\nimport sys\n" + extra +
-                        f"\nprint({output!r})\nsys.exit({code})\n")
+        path.write_text(
+            "#!/usr/bin/env python3\nimport sys\n"
+            + extra
+            + f"\nprint({output!r})\nsys.exit({code})\n"
+        )
         path.chmod(0o755)
         return path
 
@@ -48,8 +80,11 @@ class HarnessTests(unittest.TestCase):
         self.assertTrue(report["expectedFailureChecksPassed"], report)
         self.assertFalse(report["targetCompliancePassed"])
         self.assertEqual(report["unassessed"], ["semantic policies"])
-        self.assertFalse(run(self.tool(), self.baseline, self.ledger, True)
-                         ["expectedFailureChecksPassed"])
+        self.assertFalse(
+            run(self.tool(), self.baseline, self.ledger, True)[
+                "expectedFailureChecksPassed"
+            ]
+        )
 
     def test_invalid_reports_fail(self):
         for change in (
@@ -71,40 +106,61 @@ class HarnessTests(unittest.TestCase):
             with self.assertRaises(EvidenceError):
                 validate(payload, 1, self.baseline, self.ledger, False)
         for code in (0, 2, -9):
-            self.assertFalse(run(self.tool(code=code), self.baseline, self.ledger)
-                             ["expectedFailureChecksPassed"])
+            self.assertFalse(
+                run(self.tool(code=code), self.baseline, self.ledger)[
+                    "expectedFailureChecksPassed"
+                ]
+            )
 
     def test_crash_invalid_json_and_missing_checker_fail(self):
-        for extra in ("raise RuntimeError('crash')", "print('not json'); sys.exit(1)"):
-            self.assertFalse(run(self.tool(extra=extra), self.baseline, self.ledger)
-                             ["expectedFailureChecksPassed"])
-        self.assertFalse(run(self.root / "missing", self.baseline, self.ledger)
-                         ["expectedFailureChecksPassed"])
+        for extra in (
+            "raise RuntimeError('crash')",
+            "print('not json'); sys.exit(1)",
+        ):
+            self.assertFalse(
+                run(self.tool(extra=extra), self.baseline, self.ledger)[
+                    "expectedFailureChecksPassed"
+                ]
+            )
+        self.assertFalse(
+            run(self.root / "missing", self.baseline, self.ledger)[
+                "expectedFailureChecksPassed"
+            ]
+        )
 
     def test_tampering_and_revision_fail(self):
         tool = self.tool()
         (self.baseline / "new.go").write_text("package forbidden\n")
-        self.assertFalse(run(tool, self.baseline, self.ledger)
-                         ["expectedFailureChecksPassed"])
+        self.assertFalse(
+            run(tool, self.baseline, self.ledger)["expectedFailureChecksPassed"]
+        )
         (self.baseline / "new.go").unlink()
         (self.baseline / "pluto.toml").write_text("schema = 8\n")
-        self.assertFalse(run(tool, self.baseline, self.ledger)
-                         ["expectedFailureChecksPassed"])
+        self.assertFalse(
+            run(tool, self.baseline, self.ledger)["expectedFailureChecksPassed"]
+        )
         (self.baseline / "pluto.toml").write_text("schema = 1\n")
         self.ledger["revision"] = "wrong"
-        self.assertFalse(run(tool, self.baseline, self.ledger)
-                         ["expectedFailureChecksPassed"])
+        self.assertFalse(
+            run(tool, self.baseline, self.ledger)["expectedFailureChecksPassed"]
+        )
 
     def test_ignored_source_is_rejected_but_build_artifacts_are_not(self):
         (self.baseline / ".git/info/exclude").write_text("local/\n")
         local = self.baseline / "local"
         local.mkdir()
         (local / "cert.pem").write_text("synthetic certificate")
-        self.assertTrue(run(self.tool(), self.baseline, self.ledger)
-                        ["expectedFailureChecksPassed"])
+        self.assertTrue(
+            run(self.tool(), self.baseline, self.ledger)[
+                "expectedFailureChecksPassed"
+            ]
+        )
         (local / "hidden.go").write_text("package hidden\n")
-        self.assertFalse(run(self.tool(), self.baseline, self.ledger)
-                         ["expectedFailureChecksPassed"])
+        self.assertFalse(
+            run(self.tool(), self.baseline, self.ledger)[
+                "expectedFailureChecksPassed"
+            ]
+        )
 
     def test_checker_cannot_modify_baseline(self):
         target = str(self.baseline / "pluto.toml")
@@ -114,27 +170,42 @@ class HarnessTests(unittest.TestCase):
         self.assertTrue(report["errors"])
 
     def test_every_pinned_boundary_failure_is_required(self):
-        ledger = json.loads(Path(__file__).parents[1].joinpath(
-            "architecture-baseline.json").read_text())
+        ledger = json.loads(
+            Path(__file__)
+            .parents[1]
+            .joinpath("architecture-baseline.json")
+            .read_text()
+        )
         payload = copy.deepcopy(self.payload)
         payload["diagnostics"] = []
         for expected in ledger["expected"]:
             path = self.baseline / expected["file"]
             path.parent.mkdir(parents=True, exist_ok=True)
             # Several pinned diagnostics can share a source file. Preserve its
-            # longest required location when a later finding is on an earlier line.
-            existing_lines = len(path.read_text().splitlines()) if path.exists() else 0
+            # longest required location when a later finding is on an earlier
+            # line.
+            existing_lines = (
+                len(path.read_text().splitlines()) if path.exists() else 0
+            )
             path.write_text("source\n" * max(existing_lines, expected["line"]))
-            payload["diagnostics"].append({
-                "id": expected["id"], "file": expected["file"],
-                "line": expected["line"], "severity": "error",
-                "message": expected["messageContains"], "repair": "repair",
-            })
+            payload["diagnostics"].append(
+                {
+                    "id": expected["id"],
+                    "file": expected["file"],
+                    "line": expected["line"],
+                    "severity": "error",
+                    "message": expected["messageContains"],
+                    "repair": "repair",
+                }
+            )
         validate(payload, 1, self.baseline, ledger, False)
         for index in range(len(payload["diagnostics"])):
             incomplete = copy.deepcopy(payload)
             omitted = incomplete["diagnostics"].pop(index)
-            with self.subTest(omitted=omitted), self.assertRaises(EvidenceError):
+            with (
+                self.subTest(omitted=omitted),
+                self.assertRaises(EvidenceError),
+            ):
                 validate(incomplete, 1, self.baseline, ledger, False)
 
 

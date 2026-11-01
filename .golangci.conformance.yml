@@ -1,0 +1,61 @@
+version: "2"
+
+run:
+  timeout: 3m
+  modules-download-mode: readonly
+  build-tags:
+    - plutocandidate
+
+linters:
+  default: none
+  enable:
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - wsl_v5
+  settings:
+    wsl_v5:
+      # The composed formatter checks leading whitespace while preserving
+      # the required blank line before block-start comments.
+      disable:
+        - leading-whitespace
+      # Keep an assignment beside its immediate error check or first use.
+      # Separate unrelated work, completed blocks, and the final return.
+      default: default
+      allow-first-in-block: true
+      allow-whole-block: false
+      cuddle-max-statements: 1
+      branch-max-lines: 2
+      enable:
+        - after-block
+        - after-expr
+  exclusions:
+    # Materialized fixtures are authored source, including generated markers.
+    generated: disable
+    presets: []
+
+formatters:
+  enable:
+    - gci
+    - gofumpt
+    - golines
+  settings:
+    gci:
+      custom-order: true
+      sections:
+        - standard
+        - prefix(conformance.invalid/operation)
+        - default
+    gofumpt:
+      module-path: conformance.invalid/operation
+    golines:
+      max-len: 80
+      tab-len: 4
+      shorten-comments: false
+  exclusions:
+    generated: disable
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

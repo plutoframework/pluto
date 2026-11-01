@@ -16,76 +16,142 @@ import (
 
 func TestComposedTypedDeliveryBound(t *testing.T) {
 	f := setup(t)
+
 	committed, err := f.dispatch(t, "bounded-delivery")
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	effect, err := data.NewDispatchEffect()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	var calls atomic.Int32
-	handler, err := effect.Bind(func(ctx context.Context, delivery jobs.Delivery, payload data.DispatchNotice) error {
-		if delivery.ID != committed.JobID || delivery.TenantID == nil || *delivery.TenantID != "north" || payload.ShipmentID != "one" || delivery.MaxAttempts != 5 {
-			return jobs.Permanent(jobs.ErrInvalid)
-		}
-		// The configured worker credential is verified on every retry. Neither the
-		// stored actor/tenant label nor a successful enqueue is execution authority.
-		return f.manager.WithIdentity(ctx, f.tokens["alice"], func(ctx context.Context, identity *auth.Identity) error {
-			return f.gate.Within(ctx, identity, *delivery.TenantID, payload.ShipmentID, func(ctx context.Context, execution *identitygate.Execution) error {
-				return f.gate.Use(ctx, execution, *delivery.TenantID, payload.ShipmentID, func(context.Context) error {
-					calls.Add(1)
-					return errors.New("synthetic transient delivery failure")
-				})
-			})
-		})
-	})
+
+	handler, err := effect.Bind(
+		func(
+			ctx context.Context,
+			delivery jobs.Delivery,
+			payload data.DispatchNotice,
+		) error {
+			if delivery.ID != committed.JobID || delivery.TenantID == nil ||
+				*delivery.TenantID != "north" ||
+				payload.ShipmentID != "one" ||
+				delivery.MaxAttempts != 5 {
+				return jobs.Permanent(jobs.ErrInvalid)
+			}
+
+			// Verify the configured worker credential on every retry. Stored
+			// actor/tenant labels and enqueue success do not grant authority.
+			return f.manager.WithIdentity(
+				ctx,
+				f.tokens["alice"],
+				func(ctx context.Context, identity *auth.Identity) error {
+					return f.gate.Within(
+						ctx,
+						identity,
+						*delivery.TenantID,
+						payload.ShipmentID,
+						func(
+							ctx context.Context,
+							execution *identitygate.Execution,
+						) error {
+							return f.gate.Use(
+								ctx,
+								execution,
+								*delivery.TenantID,
+								payload.ShipmentID,
+								func(context.Context) error {
+									calls.Add(1)
+
+									return errors.New(
+										"synthetic transient delivery failure",
+									)
+								},
+							)
+						},
+					)
+				},
+			)
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	store, err := jobspostgres.New(f.pool)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	config := jobs.DefaultConfig()
 	config.Concurrency = 1
 	config.PollInterval = time.Millisecond
 	config.RetryBase = time.Millisecond
 	config.RetryMax = 2 * time.Millisecond
-	worker, err := jobs.NewWorker(store, map[jobs.Kind]jobs.Handler{effect.Kind(): handler}, config)
+
+	worker, err := jobs.NewWorker(
+		store,
+		map[jobs.Kind]jobs.Handler{effect.Kind(): handler},
+		config,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	ctx, cancel := context.WithCancel(t.Context())
+
 	done := make(chan error, 1)
 	go func() { done <- worker.Run(ctx) }()
+
 	defer func() {
 		cancel()
+
 		if err := <-done; !errors.Is(err, context.Canceled) {
 			t.Errorf("worker shutdown=%v", err)
 		}
 	}()
+
 	deadline := time.NewTimer(5 * time.Second)
 	defer deadline.Stop()
+
 	tick := time.NewTicker(5 * time.Millisecond)
 	defer tick.Stop()
+
 	for {
-		var state string
-		var attempt, maximum int
-		if err := f.pool.QueryRow(t.Context(), "SELECT state,attempts,max_attempts FROM pluto_jobs WHERE id=$1", committed.JobID).Scan(&state, &attempt, &maximum); err != nil {
+		var (
+			state            string
+			attempt, maximum int
+		)
+		if err := f.pool.QueryRow(
+			t.Context(),
+			"SELECT state,attempts,max_attempts FROM pluto_jobs WHERE id=$1",
+			committed.JobID,
+		).
+			Scan(&state, &attempt, &maximum); err != nil {
 			t.Fatal(err)
 		}
+
 		if state == "failed" {
 			if attempt != 5 || maximum != 5 || calls.Load() != 5 {
-				t.Fatalf("retry bound lost: attempts=%d maximum=%d calls=%d", attempt, maximum, calls.Load())
+				t.Fatalf(
+					"retry bound lost: attempts=%d maximum=%d calls=%d",
+					attempt,
+					maximum,
+					calls.Load(),
+				)
 			}
+
 			break
 		}
+
 		select {
 		case <-deadline.C:
 			t.Fatal("bounded delivery did not exhaust")
 		case <-tick.C:
 		}
 	}
+
 	assertCounts(t, f, 1)
 }
