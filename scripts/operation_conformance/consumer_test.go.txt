@@ -1,0 +1,254 @@
+package conformance
+
+import (
+	"context"
+	"errors"
+	"os"
+	"sync"
+	"testing"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/plutoframework/pluto-core/examples/shipments"
+	shipmentpostgres "github.com/plutoframework/pluto-core/examples/shipments/postgres"
+	"github.com/plutoframework/pluto-core/state"
+	rbac "github.com/plutoframework/pluto-rbac"
+)
+
+const dispatch rbac.PermissionID = "shipments:dispatch"
+
+type caller struct {
+	actor  string
+	tenant string
+}
+type change = state.Evaluated[shipments.Status, shipments.Event]
+
+// The private application port requires both opaque contracts. Entry adapters
+// receive an operation, never its concrete writer or database pool.
+type writePort interface {
+	commit(context.Context, *rbac.Execution, string, change) error
+}
+type guardedWriter struct {
+	requirement *rbac.Requirement
+	concrete    *shipmentpostgres.Writer
+}
+
+func (w *guardedWriter) commit(ctx context.Context, execution *rbac.Execution, actor string, evaluated change) error {
+	binding := evaluated.Binding()
+	return w.requirement.Use(ctx, execution, actor, rbac.Scope{TenantID: binding.Scope}, binding.Entity, func(ctx context.Context) error {
+		return w.concrete.CommitDispatch(ctx, evaluated)
+	})
+}
+
+type operation struct {
+	requirement *rbac.Requirement
+	lifecycle   *state.Machine[shipments.Status, shipments.Event, bool]
+	writer      writePort
+}
+
+func (o *operation) execute(ctx context.Context, who caller, loaded shipments.Snapshot) error {
+	return o.requirement.Within(ctx, who.actor, rbac.Scope{TenantID: who.tenant}, loaded.ID, func(ctx context.Context, execution *rbac.Execution) error {
+		evaluated, err := o.lifecycle.Evaluate(loaded.Binding(), shipments.Dispatch, loaded.AddressVerified)
+		if err != nil {
+			return err
+		}
+		return o.writer.commit(ctx, execution, who.actor, evaluated)
+	})
+}
+
+type fixture struct {
+	pool      *pgxpool.Pool
+	operation *operation
+	writer    *guardedWriter
+	roles     []rbac.RoleID
+}
+
+func mustPolicy(t *testing.T) *rbac.Policy {
+	t.Helper()
+	policy, err := rbac.New(rbac.Definition{
+		Permissions: []rbac.Permission{
+			{ID: dispatch, Name: "Dispatch", Description: "Dispatch shipments"},
+		},
+		Roles: []rbac.Role{
+			{ID: "dispatcher", Name: "Dispatcher", Description: "Dispatch shipments", Permissions: []rbac.PermissionID{dispatch}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return policy
+}
+func setup(t *testing.T) *fixture {
+	t.Helper()
+	url := os.Getenv("PLUTO_OPERATION_DATABASE_URL")
+	if url == "" {
+		t.Fatal("isolated database URL required; skips forbidden")
+	}
+	ctx := t.Context()
+	pool, err := pgxpool.New(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if _, err = pool.Exec(ctx, "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"+shipmentpostgres.Schema); err != nil {
+		t.Fatal(err)
+	}
+	machine, err := shipments.NewLifecycle()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fixture{pool: pool, roles: []rbac.RoleID{"dispatcher"}}
+	resolver := rbac.RoleResolverFunc(func(_ context.Context, actor string, scope rbac.Scope) ([]rbac.RoleID, error) {
+		if actor != "alice" || scope.TenantID != "north" {
+			return nil, nil
+		}
+		return f.roles, nil
+	})
+	requirement := newRequirement(t, resolver)
+	concrete, err := shipmentpostgres.New(pool, machine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.writer = &guardedWriter{requirement: requirement, concrete: concrete}
+	f.operation = &operation{requirement: requirement, lifecycle: machine, writer: f.writer}
+	for _, tenant := range []string{"north", "south"} {
+		for _, id := range []string{"one", "two"} {
+			if _, err := pool.Exec(ctx, "INSERT INTO shipments VALUES ($1,$2,'packed',0,true)", tenant, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	return f
+}
+func newRequirement(t *testing.T, resolver rbac.RoleResolver) *rbac.Requirement {
+	t.Helper()
+	authorizer, err := rbac.NewAuthorizer(mustPolicy(t), resolver, rbac.Options{RequireTenant: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requirement, err := authorizer.Require(dispatch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return requirement
+}
+func snapshot(tenant, id string) shipments.Snapshot {
+	return shipments.Snapshot{TenantID: tenant, ID: id, Status: shipments.Packed, Version: 0, AddressVerified: true}
+}
+func (f *fixture) evaluate(t *testing.T, tenant, id string) change {
+	t.Helper()
+	evaluated, err := f.operation.lifecycle.Evaluate(snapshot(tenant, id).Binding(), shipments.Dispatch, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return evaluated
+}
+func assertRows(t *testing.T, f *fixture, status string, version int64, intents int) {
+	t.Helper()
+	var got string
+	var gotVersion int64
+	var gotIntents int
+	if err := f.pool.QueryRow(t.Context(), "SELECT status,version FROM shipments WHERE tenant_id='north' AND id='one'").Scan(&got, &gotVersion); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM shipment_dispatch_outbox").Scan(&gotIntents); err != nil {
+		t.Fatal(err)
+	}
+	if got != status || gotVersion != version || gotIntents != intents {
+		t.Fatalf("rows status=%s version=%d intents=%d", got, gotVersion, gotIntents)
+	}
+}
+func TestComposedPermissionBoundary(t *testing.T) {
+	f := setup(t)
+	ctx := t.Context()
+	evaluated := f.evaluate(t, "north", "one")
+	for _, execution := range []*rbac.Execution{nil, {}} {
+		if err := f.writer.commit(ctx, execution, "alice", evaluated); !errors.Is(err, rbac.ErrForbidden) {
+			t.Fatalf("ungated write=%v", err)
+		}
+	}
+	var escaped *rbac.Execution
+	err := f.operation.requirement.Within(ctx, "alice", rbac.Scope{TenantID: "north"}, "one", func(ctx context.Context, execution *rbac.Execution) error {
+		escaped = execution
+		for _, wrong := range []change{f.evaluate(t, "south", "one"), f.evaluate(t, "north", "two")} {
+			if err := f.writer.commit(ctx, execution, "alice", wrong); !errors.Is(err, rbac.ErrForbidden) {
+				t.Fatalf("cross-binding=%v", err)
+			}
+		}
+		if err := f.writer.commit(ctx, execution, "bob", evaluated); !errors.Is(err, rbac.ErrForbidden) {
+			t.Fatalf("cross-actor=%v", err)
+		}
+		f.roles = nil
+		if err := f.writer.commit(ctx, execution, "alice", evaluated); !errors.Is(err, rbac.ErrForbidden) {
+			t.Fatalf("revoked=%v", err)
+		}
+		f.roles = []rbac.RoleID{"dispatcher"}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.writer.commit(ctx, escaped, "alice", evaluated); !errors.Is(err, rbac.ErrForbidden) {
+		t.Fatalf("expired=%v", err)
+	}
+	foreign := newRequirement(t, rbac.RoleResolverFunc(func(context.Context, string, rbac.Scope) ([]rbac.RoleID, error) {
+		return []rbac.RoleID{"dispatcher"}, nil
+	}))
+	err = foreign.Within(ctx, "alice", rbac.Scope{TenantID: "north"}, "one", func(ctx context.Context, execution *rbac.Execution) error {
+		return f.writer.commit(ctx, execution, "alice", evaluated)
+	})
+	if !errors.Is(err, rbac.ErrForbidden) {
+		t.Fatalf("foreign execution=%v", err)
+	}
+	assertRows(t, f, "packed", 0, 0)
+	if err := f.operation.execute(ctx, caller{"alice", "south"}, snapshot("south", "one")); !errors.Is(err, rbac.ErrForbidden) {
+		t.Fatalf("denied operation=%v", err)
+	}
+	if err := f.operation.execute(ctx, caller{"alice", "north"}, snapshot("south", "one")); !errors.Is(err, rbac.ErrForbidden) {
+		t.Fatalf("mismatched loaded tenant=%v", err)
+	}
+	if err := f.operation.execute(ctx, caller{"alice", "north"}, snapshot("north", "one")); err != nil {
+		t.Fatal(err)
+	}
+	assertRows(t, f, "dispatched", 1, 1)
+}
+func TestComposedConcurrentCAS(t *testing.T) {
+	f := setup(t)
+	start := make(chan struct{})
+	results := make(chan error, 2)
+	var workers sync.WaitGroup
+	for range 2 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			results <- f.operation.execute(t.Context(), caller{"alice", "north"}, snapshot("north", "one"))
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+	successes, conflicts := 0, 0
+	for err := range results {
+		if err == nil {
+			successes++
+		} else if errors.Is(err, shipmentpostgres.ErrConflict) {
+			conflicts++
+		} else {
+			t.Fatal(err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("successes=%d conflicts=%d", successes, conflicts)
+	}
+	assertRows(t, f, "dispatched", 1, 1)
+}
+func TestComposedOutboxRollback(t *testing.T) {
+	f := setup(t)
+	if _, err := f.pool.Exec(t.Context(), "ALTER TABLE shipment_dispatch_outbox ADD CONSTRAINT reject_intent CHECK (false)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.operation.execute(t.Context(), caller{"alice", "north"}, snapshot("north", "one")); err == nil {
+		t.Fatal("failed outbox insertion committed")
+	}
+	assertRows(t, f, "packed", 0, 0)
+}
