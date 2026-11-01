@@ -14,6 +14,7 @@ class ReviewSettingsTests(unittest.TestCase):
                 "BOT_LOGIN": "jackbot-advrsty",
                 "CONFIG__USE_REPO_SETTINGS_FILE": "true",
                 "CONFIG__FALLBACK_MODELS": '["weak-model"]',
+                "PR_REVIEWER__PUBLISH_ERROR_DETAILS": "false",
             },
         ):
             env = environment()
