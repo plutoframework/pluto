@@ -121,7 +121,10 @@ class HarnessTests(unittest.TestCase):
         for expected in ledger["expected"]:
             path = self.baseline / expected["file"]
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("source\n" * expected["line"])
+            # Several pinned diagnostics can share a source file. Preserve its
+            # longest required location when a later finding is on an earlier line.
+            existing_lines = len(path.read_text().splitlines()) if path.exists() else 0
+            path.write_text("source\n" * max(existing_lines, expected["line"]))
             payload["diagnostics"].append({
                 "id": expected["id"], "file": expected["file"],
                 "line": expected["line"], "severity": "error",
