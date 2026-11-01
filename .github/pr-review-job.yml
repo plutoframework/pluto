@@ -39,6 +39,7 @@
       - name: Review current PR and evaluate policy
         env:
           GPUROUTER_API_KEY: ${{ secrets.GPUROUTER_API_KEY }}
+          PR_REVIEWER__PUBLISH_ERROR_DETAILS: "true"
           CHECK_TOKEN: ${{ steps.app.outputs.token }}
           BOT_TOKEN: ${{ secrets.PLUTO_STEWARD_TOKEN }}
           REVIEW_TOKEN: ${{ secrets.PLUTO_STEWARD_TOKEN }}

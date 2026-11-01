@@ -22,7 +22,7 @@ class PolicyTests(unittest.TestCase):
         )
         self.assertEqual(review_blockers(CLEAN), [])
 
-    def test_sensitive_changes_need_human(self):
+    def test_sensitive_categories_are_classified_without_a_human_gate(self):
         for repo, path in [
             ("pluto-auth", "README.md"),
             ("pluto-rbac", "policy.go"),
@@ -36,7 +36,7 @@ class PolicyTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(human_reasons(repo, [{"filename": path}]))
 
-    def test_rename_cannot_remove_human_requirement(self):
+    def test_rename_cannot_remove_sensitive_classification(self):
         self.assertTrue(
             human_reasons(
                 "pluto-core",
@@ -61,7 +61,7 @@ class PolicyTests(unittest.TestCase):
         for section, field, value in [
             ("coverage", "files_not_reviewed", ["x.go"]),
             ("coverage", "files_partially_reviewed", ["x.go"]),
-            ("review", "risk_level", "medium"),
+            ("review", "risk_level", "unknown"),
             ("review", "merge_recommendation", "needs_review"),
             ("review", "key_issues_to_review", [{"issue": "bug"}]),
             ("review", "security_concerns", "No concerns maybe"),
@@ -72,18 +72,42 @@ class PolicyTests(unittest.TestCase):
         for value in [None, {}, {"review": {}}, {"review": {}, "coverage": {}}]:
             self.assertTrue(review_blockers(value))
 
+    def test_clean_intrinsic_risk_never_requires_an_extra_approval(self):
+        for risk in ("low", "medium", "high"):
+            for maintainer in (False, True):
+                with self.subTest(risk=risk, maintainer=maintainer):
+                    result = copy.deepcopy(CLEAN)
+                    result["review"]["risk_level"] = risk
+                    self.assertEqual(
+                        review_blockers(result, maintainer=maintainer), []
+                    )
+
     def test_yaml_scalar_whitespace_is_not_a_new_decision(self):
         result = copy.deepcopy(CLEAN)
         result["review"].update(
-            risk_level="medium\n",
-            merge_recommendation="needs_review\n",
+            risk_level="high\n",
+            merge_recommendation="no_concerns_found\n",
             security_concerns="No\n",
         )
-        self.assertEqual(review_blockers(result, maintainer=True), [])
-        self.assertTrue(review_blockers(result, maintainer=False))
-        result["review"]["risk_level"] = "low\n"
-        result["review"]["merge_recommendation"] = "no_concerns_found\n"
         self.assertEqual(review_blockers(result), [])
+        self.assertEqual(review_blockers(result, maintainer=True), [])
+
+    def test_human_approval_never_waives_review_blockers(self):
+        for section, field, value in (
+            ("review", "merge_recommendation", "needs_review"),
+            ("review", "merge_recommendation", "changes_required"),
+            ("review", "key_issues_to_review", [{"issue": "bug"}]),
+            ("review", "security_concerns", "Uncertain ownership check"),
+            ("coverage", "files_not_reviewed", ["secret.go"]),
+            ("coverage", "files_partially_reviewed", ["partial.go"]),
+        ):
+            result = copy.deepcopy(CLEAN)
+            result[section][field] = value
+            for maintainer in (False, True):
+                with self.subTest(field=field, maintainer=maintainer):
+                    self.assertTrue(
+                        review_blockers(result, maintainer=maintainer)
+                    )
 
     def test_non_string_or_unknown_decisions_stay_blocked(self):
         for field, value in [
