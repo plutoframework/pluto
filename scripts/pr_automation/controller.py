@@ -589,7 +589,7 @@ def resolved_target(name, event):
             raise ValueError("Resolved PR does not match its triggering event")
     elif name == "workflow_run":
         if event["workflow_run"]["head_sha"] != head:
-            raise ValueError("Resolved head does not match its triggering event")
+            raise ValueError("Resolved head does not match the workflow event")
     elif name == "workflow_dispatch":
         if str(event["inputs"]["pr_number"]) != str(number):
             raise ValueError("Resolved PR does not match manual dispatch")

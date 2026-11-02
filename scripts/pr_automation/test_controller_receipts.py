@@ -169,7 +169,7 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(self.api.checks[0]["name"], GATE_CHECK)
         self.assertEqual(self.api.checks[0]["conclusion"], "success")
 
-    def test_only_explicitly_deployed_legacy_profiles_allow_receipt_repair(self):
+    def test_only_deployed_legacy_profiles_allow_receipt_repair(self):
         for policy in HISTORICAL_AUDIT_POLICIES:
             with self.subTest(policy=policy):
                 self.api = ReceiptAPI()
