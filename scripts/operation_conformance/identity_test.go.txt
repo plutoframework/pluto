@@ -1,0 +1,197 @@
+package conformance
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	auth "github.com/plutoframework/pluto-auth"
+	"github.com/plutoframework/pluto-core/examples/shipments"
+	rbac "github.com/plutoframework/pluto-rbac"
+	identitygate "github.com/plutoframework/pluto-rbac/identity"
+)
+
+func TestComposedIdentityResourceBoundary(t *testing.T) {
+	for _, mode := range []string{
+		"zero",
+		"foreign",
+		"expired",
+		"revoked",
+		"cross-scope",
+		"resource",
+		"expired-execution",
+		"revoked-before-write",
+	} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+
+			switch mode {
+			case "zero":
+				for _, identity := range []*auth.Identity{nil, {}} {
+					if _, err := f.operation.execute(
+						t.Context(),
+						identity,
+						"north",
+						"one",
+						"invalid-authority",
+					); !errors.Is(
+						err,
+						auth.ErrUnauthenticated,
+					) {
+						t.Fatalf("zero identity=%v", err)
+					}
+				}
+			case "foreign":
+				foreign := manager(t, time.Now)
+
+				issued, err := foreign.Start(t.Context(), "alice")
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				err = foreign.WithIdentity(
+					t.Context(),
+					issued.Token,
+					func(ctx context.Context, identity *auth.Identity) error {
+						_, err := f.operation.execute(
+							ctx,
+							identity,
+							"north",
+							"one",
+							"invalid-authority",
+						)
+
+						return err
+					},
+				)
+				if !errors.Is(err, auth.ErrUnauthenticated) {
+					t.Fatalf("foreign issuer=%v", err)
+				}
+			default:
+				err := f.manager.WithIdentity(
+					t.Context(),
+					f.tokens["alice"],
+					func(ctx context.Context, identity *auth.Identity) error {
+						switch mode {
+						case "expired":
+							f.clock.Add(int64(2 * time.Hour))
+						case "revoked":
+							if err := f.manager.Revoke(
+								ctx,
+								f.tokens["alice"],
+							); err != nil {
+								return err
+							}
+						case "cross-scope":
+							_, err := f.operation.execute(
+								ctx,
+								identity,
+								"south",
+								"one",
+								"invalid-authority",
+							)
+
+							return err
+						case "resource":
+							_, err := f.operation.execute(
+								ctx,
+								identity,
+								"north",
+								"hidden",
+								"invalid-authority",
+							)
+
+							return err
+						case "expired-execution":
+							var escaped *identitygate.Execution
+
+							if err := f.gate.Within(
+								ctx,
+								identity,
+								"north",
+								"one",
+								func(
+									_ context.Context,
+									execution *identitygate.Execution,
+								) error {
+									escaped = execution
+									return nil
+								},
+							); err != nil {
+								return err
+							}
+
+							_, err := f.data.Load(ctx, escaped, "one")
+
+							return err
+						case "revoked-before-write":
+							return f.gate.Within(
+								ctx,
+								identity,
+								"north",
+								"one",
+								func(
+									ctx context.Context,
+									execution *identitygate.Execution,
+								) error {
+									f.allowed.Store(false)
+
+									input, err := shipments.NewDispatchInput(
+										"one",
+										"invalid-authority",
+									)
+									if err != nil {
+										return err
+									}
+
+									_, err = f.data.StartDispatch(
+										ctx,
+										execution,
+										input,
+									)
+
+									return err
+								},
+							)
+						}
+
+						_, err := f.operation.execute(
+							ctx,
+							identity,
+							"north",
+							"one",
+							"invalid-authority",
+						)
+
+						return err
+					},
+				)
+
+				want := error(rbac.ErrForbidden)
+				if mode == "expired" || mode == "revoked" {
+					want = auth.ErrUnauthenticated
+				}
+
+				if !errors.Is(err, want) {
+					t.Fatalf("%s error=%v want=%v", mode, err, want)
+				}
+			}
+
+			assertCounts(t, f, 0)
+
+			var claims int
+			if err := f.pool.QueryRow(
+				t.Context(),
+				"SELECT count(*) FROM pluto_idempotency",
+			).
+				Scan(&claims); err != nil {
+				t.Fatal(err)
+			}
+
+			if claims != 0 {
+				t.Fatalf("denied authority created durable claim: %d", claims)
+			}
+		})
+	}
+}
