@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import sys
 import tempfile
 
@@ -157,9 +158,11 @@ def review_failed(api, prefix, head, scope, summary):
     check(api, prefix, GATE_CHECK, head, "failure",
           "No complete review is available.")
 
-def process(api, repository, number, fresh=False):
+def process(api, repository, number, fresh=False, expected_head=None):
     prefix = f"/repos/{ORG}/{repository}"
     pr = api.request(f"{prefix}/pulls/{number}")
+    if expected_head is not None and pr["head"]["sha"] != expected_head:
+        return
     if pr["base"]["ref"] != "main":
         return
     if pr["state"] != "open":
@@ -551,6 +554,32 @@ def audit_merged(api, prefix, pr, repository):
     )
 
 
+def resolved_target(name, event):
+    """Bind each matrix job to the event hint and immutable queue identity."""
+    fields = ("RESOLVED_PR_NUMBER", "RESOLVED_HEAD_SHA")
+    if not any(field in os.environ for field in fields):
+        return None
+    number, head = (os.environ.get(field, "") for field in fields)
+    if not re.fullmatch(r"[1-9][0-9]*", number):
+        raise ValueError("Invalid resolved PR number")
+    if not re.fullmatch(r"[0-9a-f]{40}", head):
+        raise ValueError("Invalid resolved head identity")
+    number = int(number)
+    if name == "pull_request_target":
+        pr = event["pull_request"]
+        if pr["number"] != number or pr["head"]["sha"] != head:
+            raise ValueError("Resolved PR does not match its triggering event")
+    elif name == "workflow_run":
+        if event["workflow_run"]["head_sha"] != head:
+            raise ValueError("Resolved head does not match its triggering event")
+    elif name == "workflow_dispatch":
+        if str(event["inputs"]["pr_number"]) != str(number):
+            raise ValueError("Resolved PR does not match manual dispatch")
+    else:
+        raise ValueError("Unsupported privileged workflow event")
+    return number, head
+
+
 def main():
     full_name = os.environ["TARGET_REPOSITORY"]
     if full_name not in {f"{ORG}/{name}" for name in REPOSITORIES}:
@@ -562,6 +591,18 @@ def main():
             "Reviewer credential does not match the Steward identity"
         )
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+    name = os.environ["GITHUB_EVENT_NAME"]
+    target = resolved_target(name, event)
+    if target is not None:
+        number, head = target
+        process(
+            api, repository, number,
+            fresh=name == "workflow_dispatch" and str(
+                event["inputs"].get("retry_review", "false")
+            ).lower() == "true",
+            expected_head=head,
+        )
+        return
     if os.environ["GITHUB_EVENT_NAME"] == "pull_request_target":
         number = event["pull_request"]["number"]
         process(api, repository, number)
