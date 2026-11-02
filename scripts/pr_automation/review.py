@@ -6,10 +6,11 @@ from pathlib import Path
 import subprocess
 import sys
 
-from review_diagnostics import safe_report
+from review_diagnostics import safe_report, selected_model
 
 
 def environment():
+    model = selected_model()
     env = dict(os.environ)
     env.update(
         {
@@ -18,7 +19,7 @@ def environment():
             "GITHUB__USER_TOKEN": os.environ["REVIEW_TOKEN"],
             "GITHUB__DEPLOYMENT_TYPE": "user",
             "GITHUB__AGENT_LOGIN": os.environ["BOT_LOGIN"],
-            "CONFIG__MODEL": "openai/openai/gpt-6-astra",
+            "CONFIG__MODEL": model,
             "CONFIG__CUSTOM_MODEL_MAX_TOKENS": "128000",
             "CONFIG__MAX_MODEL_TOKENS": "96000",
             "BAD_EXTENSIONS__DEFAULT": "[]",
@@ -29,14 +30,12 @@ def environment():
             "CONFIG__RETRY_SAME_MODEL_ON_TIMEOUT": "false",
             # Keep reply headroom within the explicit total-token budget.
             "CONFIG__MAX_OUTPUT_TOKENS": "16384",
-            "CONFIG__ADDITIONAL_REASONING_EFFORT_MODELS": (
-                '["openai/openai/gpt-6-astra"]'
-            ),
+            "CONFIG__ADDITIONAL_REASONING_EFFORT_MODELS": json.dumps([model]),
             "CONFIG__FALLBACK_MODELS": "[]",
             "IGNORE__GLOB": "[]",
             "IGNORE__REGEX": "[]",
             "CONFIG__IGNORE_LANGUAGE_FRAMEWORK": "[]",
-            "CONFIG__NO_TEMPERATURE_MODELS": '["openai/openai/gpt-6-astra"]',
+            "CONFIG__NO_TEMPERATURE_MODELS": json.dumps([model]),
             "CONFIG__NUM_RETRIES": "0",
             "CONFIG__USE_REPO_SETTINGS_FILE": "false",
             "CONFIG__USE_GLOBAL_SETTINGS_FILE": "false",

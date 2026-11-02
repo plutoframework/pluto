@@ -162,13 +162,26 @@ def diagnostic_reviewer(original, recorder):
 
 
 
-STREAMING_REVIEW_MODEL = "openai/openai/gpt-6-astra"
+REVIEW_MODELS = (
+    "openai/openai/gpt-6-astra",
+    "openai/anthropic/claude-opus-5.5",
+)
+
+
+def selected_model():
+    """Accept only the protected operator's explicit model choices."""
+    value = os.environ.get("PLUTO_REVIEW_MODEL", "") or REVIEW_MODELS[1]
+    if value not in REVIEW_MODELS:
+        raise ValueError("Unsupported protected review model")
+    return value
+
 
 
 def completed_reviewer(original):
     """Use the pinned streaming transport and reject unfinished completions."""
     class CompletedReviewer(original):
         def __init__(self, *args, **kwargs):
+            model = selected_model()
             super().__init__(*args, **kwargs)
             handler = self.ai_handler
             models = getattr(handler, "streaming_required_models", None)
@@ -176,8 +189,8 @@ def completed_reviewer(original):
                     or any(type(m) is not str for m in models)):
                 raise RuntimeError("Pinned streaming handler is incompatible")
             selected = models.copy()
-            if STREAMING_REVIEW_MODEL not in selected:
-                selected.append(STREAMING_REVIEW_MODEL)
+            if model not in selected:
+                selected.append(model)
             handler.streaming_required_models = selected
             completion = handler.chat_completion
             async def completed(*args, **kwargs):

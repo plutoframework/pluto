@@ -10,7 +10,7 @@ from unittest.mock import patch
 from test_review_diagnostics import bind_fake_retry_method
 
 from review_diagnostics import (
-    Recorder, STREAMING_REVIEW_MODEL, completed_reviewer, diagnostic_reviewer,
+    Recorder, completed_reviewer, diagnostic_reviewer,
     main,
 )
 
@@ -45,6 +45,11 @@ class FakeReviewer:
 
 class CompletionTests(unittest.TestCase):
     def setUp(self):
+        self.model = patch.dict(os.environ, {
+            "PLUTO_REVIEW_MODEL": "openai/openai/gpt-6-astra",
+        })
+        self.model.start()
+        self.addCleanup(self.model.stop)
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)
         self.path = Path(directory.name) / "diagnostics.json"
@@ -59,7 +64,7 @@ class CompletionTests(unittest.TestCase):
                          {"review": CONTENT})
         self.assertTrue(reviewer.parsed)
         self.assertEqual(reviewer.ai_handler.streaming_required_models,
-                         DEFAULTS + [STREAMING_REVIEW_MODEL])
+                         DEFAULTS + ["openai/openai/gpt-6-astra"])
         self.assertEqual(DEFAULTS, ["openai/qwq-plus"])
         self.assertIsNot(reviewer.ai_handler.streaming_required_models,
                          DEFAULTS)

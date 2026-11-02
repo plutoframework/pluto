@@ -10,6 +10,7 @@ from controller import (
     AUDIT_APP_ID,
     HISTORICAL_AUDIT_POLICY,
     HISTORICAL_AUDIT_POLICIES,
+    MODEL_AUDIT_POLICY,
     process,
     audit_merged,
     workflows_ready,
@@ -175,6 +176,8 @@ class ReceiptTests(unittest.TestCase):
                 self.api = ReceiptAPI()
                 evidence = self.historical()
                 evidence["policy"] = policy
+                if policy == MODEL_AUDIT_POLICY:
+                    evidence["model"] = "openai/anthropic/claude-opus-5.5"
                 self.api.history[0]["output"]["text"] = json.dumps(evidence)
                 with patch("controller.run_review") as model:
                     process(self.api, "pluto-core", 7)
@@ -184,21 +187,44 @@ class ReceiptTests(unittest.TestCase):
                 self.assertEqual(self.api.merge_calls, 0)
                 self.assertEqual(self.api.queue_calls, 0)
 
+    def test_model_profile_audit_requires_approved_model_metadata(self):
+        for model in (None, "untrusted/model", "openai/openai/gpt-6-astra",
+                      "openai/anthropic/claude-opus-5.5"):
+            with self.subTest(model=model):
+                self.api = ReceiptAPI()
+                evidence = self.historical()
+                evidence["policy"] = MODEL_AUDIT_POLICY
+                if model is not None:
+                    evidence["model"] = model
+                self.api.history[0]["output"]["text"] = json.dumps(evidence)
+                process(self.api, "pluto-core", 7)
+                self.assertEqual(len(self.api.checks), int(model in (
+                    "openai/openai/gpt-6-astra",
+                    "openai/anthropic/claude-opus-5.5",
+                )))
+                self.assertEqual(self.api.merge_calls, 0)
+                self.assertEqual(self.api.queue_calls, 0)
+
     def test_current_policy_audit_requires_bound_input_attestation(self):
-        for valid in (True, False):
-            with self.subTest(valid=valid):
+        for state in ("valid", "missing_proof", "missing_model", "other_model"):
+            with self.subTest(state=state):
                 self.api = ReceiptAPI()
                 evidence = self.historical()
                 evidence["policy"] = "current-policy"
+                evidence["model"] = "openai/anthropic/claude-opus-5.5"
                 evidence["result"] = with_input(self.api, CLEAN)
-                if not valid:
+                if state == "missing_proof":
                     evidence["result"].pop("input_evidence")
+                elif state == "missing_model":
+                    evidence.pop("model")
+                elif state == "other_model":
+                    evidence["model"] = "openai/openai/gpt-6-astra"
                 self.api.history[0]["output"]["text"] = json.dumps(evidence)
                 self.api.pr["base"]["sha"] = "c" * 40
                 with patch("controller.run_review") as model:
                     process(self.api, "pluto-core", 7)
                 model.assert_not_called()
-                self.assertEqual(len(self.api.checks), int(valid))
+                self.assertEqual(len(self.api.checks), int(state == "valid"))
                 self.assertEqual(self.api.merge_calls, 0)
                 self.assertEqual(self.api.queue_calls, 0)
 

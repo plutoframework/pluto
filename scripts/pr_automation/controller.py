@@ -21,6 +21,7 @@ from policy import (
 )
 from review import ReviewExecutionError, ReviewInputError, run as run_review
 from review_inputs import validate_input_evidence
+from review_diagnostics import REVIEW_MODELS, selected_model
 
 
 def check(api, prefix, name, head, conclusion, summary, evidence=None):
@@ -92,6 +93,7 @@ def review_scope(pr):
         "head": pr["head"]["sha"],
         "base": pr["base"]["sha"],
         "policy": os.environ["POLICY_SHA"],
+        "model": selected_model(),
         "reviewer": os.environ["BOT_LOGIN"],
     }
 
@@ -261,7 +263,7 @@ def process(api, repository, number, fresh=False, expected_head=None):
         except Exception:
             review_failed(
                 api, prefix, head, scope,
-                "Astra review failed or returned incomplete output. "
+                "Model review failed or returned incomplete output. "
                 "Automatic merging remains blocked.",
             )
             return
@@ -297,7 +299,7 @@ def process(api, repository, number, fresh=False, expected_head=None):
             REVIEW_CHECK,
             head,
             "success",
-            "Astra review completed. The separate merge-policy check evaluates"
+            "Model review completed. The separate merge-policy check evaluates"
             " its findings.",
             evidence,
         )
@@ -337,7 +339,8 @@ def process(api, repository, number, fresh=False, expected_head=None):
                 "event": "REQUEST_CHANGES",
                 "commit_id": head,
                 "body": (
-                    "Astra identified unresolved findings or security concerns"
+                    "The model identified unresolved findings or security "
+                    "concerns"
                     " for this commit. See the PR review feedback and Pluto "
                     "merge-policy check, then push fixes for a fresh review."
                 ),
@@ -369,7 +372,7 @@ def process(api, repository, number, fresh=False, expected_head=None):
         GATE_CHECK,
         head,
         "success",
-        "Complete clean Astra review and current CI/security proofs passed; "
+        "Complete clean Model review and current CI/security proofs passed; "
         "Steward may independently approve and merge.",
     )
     if steward_review_state(reviews, head) != "APPROVED":
@@ -379,7 +382,7 @@ def process(api, repository, number, fresh=False, expected_head=None):
                 "event": "APPROVE",
                 "commit_id": head,
                 "body": (
-                    "Pluto policy passed for this commit: complete clean Astra"
+                    "Pluto policy passed for this commit: complete clean model"
                     " review and current CI/security checks."
                 ),
             },
@@ -453,8 +456,11 @@ def process(api, repository, number, fresh=False, expected_head=None):
 
 
 
+MODEL_AUDIT_POLICY = "96d3fd33a5add9996941a357b739a62aadb5476b"
 HISTORICAL_AUDIT_POLICY = "c5b2a88b22579c05db82af17812ded02bab77d5d"
 HISTORICAL_AUDIT_POLICIES = {
+    # Protected model selector without input proof, merged in Pluto PR #11.
+    MODEL_AUDIT_POLICY,
     HISTORICAL_AUDIT_POLICY,
     # Protected budget-only bootstrap, merged by Steward in Pluto PR #7.
     "8974ec5e5b320880382b210e598fa140d3b200ad",
@@ -549,11 +555,16 @@ def audit_merged(api, prefix, pr, repository):
     if review_blockers(result):
         return
     if policy in HISTORICAL_AUDIT_POLICIES:
+        if (policy == MODEL_AUDIT_POLICY
+                and evidence.get("model") not in REVIEW_MODELS):
+            return
         # This signed historical profile had no recovered-input attestation.
         # Admit only its complete positive review of ordinary provided patches.
         if any(not file.get("patch") for file in files):
             return
     else:
+        if evidence.get("model") != selected_model():
+            return
         historical_pr = {
             **pr, "base": {**pr["base"], "sha": evidence.get("base")}
         }

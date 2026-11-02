@@ -56,7 +56,7 @@ copies in library and CLI repositories synchronized. Run
 ## Pull request review
 
 Changes to `main` use pull requests. The independent Steward account can
-approve and merge after CI, security checks and a complete Astra review pass.
+approve and merge after CI, security checks and a complete model review pass.
 Sensitive code and tooling changes use the same required checks; they do not
 require a separate human voter. Unresolved findings, incomplete reviews and
 outstanding human requests for changes remain blocking. See the
