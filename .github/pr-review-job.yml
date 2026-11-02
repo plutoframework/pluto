@@ -1,10 +1,38 @@
 # Source template for rollout.py; not executed as a standalone workflow.
+  resolve:
+    name: Resolve current review targets
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      matrix: ${{ steps.targets.outputs.matrix }}
+      has_targets: ${{ steps.targets.outputs.has_targets }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          repository: plutoframework/pluto
+          ref: ${{ inputs.policy_revision }}
+          path: policy
+          persist-credentials: false
+      - name: Resolve current pull requests
+        id: targets
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 policy/scripts/pr_automation/resolve.py
   review:
-    if: >-
-      github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.head_branch != github.event.repository.default_branch &&
-       contains(fromJSON('["pull_request", "pull_request_review", "dynamic"]'), github.event.workflow_run.event))
+    needs: resolve
+    if: needs.resolve.outputs.has_targets == 'true'
     name: Review and enforce merge policy
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.resolve.outputs.matrix) }}
+    concurrency:
+      group: >-
+        pluto-review-${{ github.repository }}-${{ matrix.number }}-${{
+          matrix.head }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: pluto-review
@@ -46,6 +74,8 @@
           BOT_LOGIN: jackbot-advrsty
           PLUTO_REVIEW_APP_ID: ${{ vars.PLUTO_REVIEW_APP_ID }}
           TARGET_REPOSITORY: ${{ github.repository }}
+          RESOLVED_PR_NUMBER: ${{ matrix.number }}
+          RESOLVED_HEAD_SHA: ${{ matrix.head }}
           POLICY_SHA: ${{ inputs.policy_revision }}
           PR_AGENT_SOURCE: ${{ github.workspace }}/pr-agent
           ENABLE_AUTO_MERGE: ${{ vars.PLUTO_AUTO_MERGE }}

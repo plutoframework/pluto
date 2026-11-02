@@ -35,7 +35,8 @@ on:
   pull_request_target:
     types: [opened, reopened, synchronize, ready_for_review]
   workflow_run:
-    workflows: {json.dumps(names)}
+    workflows:
+{chr(10).join("      - " + json.dumps(name) for name in names)}
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -49,13 +50,6 @@ on:
         default: false
 permissions:
   contents: read
-concurrency:
-  group: >-
-    pluto-review-${{{{
-      github.event.pull_request.head.sha ||
-      github.event.workflow_run.head_sha || inputs.pr_number
-    }}}}
-  cancel-in-progress: false
 jobs:
 """ + (ROOT / ".github/pr-review-job.yml").read_text().split("\n", 1)[
         1
@@ -103,8 +97,7 @@ def security(revision, has_go, has_node):
         working-directory: source
         run: python3 ../policy/scripts/pr_automation/security.py
 """
-    return (
-        """name: Pluto security
+    return """name: Pluto security
 on: [push, pull_request]
 permissions:
   contents: read
@@ -113,16 +106,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-"""
-        + steps
-    )
+""" + steps
 
 
 def codeowners(repository, root):
     if repository in {"pluto-auth", "pluto-rbac"}:
         return (
             "# Independent owner approval is required for every change.\n"
-            + "* " + OWNER_LOGINS + "\n"
+            + "* "
+            + OWNER_LOGINS
+            + "\n"
         )
     patterns = {
         "/.github/",
