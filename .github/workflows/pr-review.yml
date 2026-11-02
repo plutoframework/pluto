@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: plutoframework/pluto
-          ref: e7e7677491d3df54a68418c1a194ad70b64342cc
+          ref: b6fce2d468e93f86be44f3eb2d36b68f23d3c6a9
           path: policy
           persist-credentials: false
       - name: Resolve current pull requests
@@ -72,7 +72,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: plutoframework/pluto
-          ref: e7e7677491d3df54a68418c1a194ad70b64342cc
+          ref: b6fce2d468e93f86be44f3eb2d36b68f23d3c6a9
           path: policy
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -90,6 +90,7 @@ jobs:
         run: uv sync --frozen --extra github --no-dev
       - name: Review current PR and evaluate policy
         env:
+          PLUTO_REVIEW_MODEL: ${{ vars.PLUTO_REVIEW_MODEL }}
           GPUROUTER_API_KEY: ${{ secrets.GPUROUTER_API_KEY }}
           PR_REVIEWER__PUBLISH_ERROR_DETAILS: "true"
           CHECK_TOKEN: ${{ steps.app.outputs.token }}
@@ -100,7 +101,7 @@ jobs:
           TARGET_REPOSITORY: ${{ github.repository }}
           RESOLVED_PR_NUMBER: ${{ matrix.number }}
           RESOLVED_HEAD_SHA: ${{ matrix.head }}
-          POLICY_SHA: e7e7677491d3df54a68418c1a194ad70b64342cc
+          POLICY_SHA: b6fce2d468e93f86be44f3eb2d36b68f23d3c6a9
           PR_AGENT_SOURCE: ${{ github.workspace }}/pr-agent
           ENABLE_AUTO_MERGE: ${{ vars.PLUTO_AUTO_MERGE }}
         run: python3 policy/scripts/pr_automation/controller.py
