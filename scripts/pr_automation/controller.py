@@ -18,7 +18,8 @@ from policy import (
     review_blockers,
     review_value,
 )
-from review import run as run_review
+from review import ReviewExecutionError, ReviewInputError, run as run_review
+from review_inputs import validate_input_evidence
 
 
 def check(api, prefix, name, head, conclusion, summary, evidence=None):
@@ -45,27 +46,37 @@ def inventory(api, prefix, pr):
 
 
 def workflows_ready(api, prefix, pr, repository):
-    """Require successful current-head runs of every registered CI workflow."""
+    """Require canonical PR CI and any latest push duplicate to succeed."""
     reasons = []
     for path in REPOSITORIES[repository] + [SECURITY_WORKFLOW]:
         runs = api.pages(
-            f"{prefix}/actions/workflows/{path.rsplit('/', 1)[1]}/runs?event=pull_request&head_sha={pr['head']['sha']}",
+            f"{prefix}/actions/workflows/{path.rsplit('/', 1)[1]}/runs"
+            f"?head_sha={pr['head']['sha']}",
             "workflow_runs",
         )
         runs = [
-            r
-            for r in runs
-            if r.get("event") == "pull_request"
-            and r.get("head_sha") == pr["head"]["sha"]
-            and r.get("path", "").split("@")[0] == path
-            and r.get("repository", {}).get("full_name")
+            run for run in runs
+            if run.get("event") in {"pull_request", "push"}
+            and run.get("head_sha") == pr["head"]["sha"]
+            and run.get("path", "").split("@")[0] == path
+            and run.get("repository", {}).get("full_name")
             == pr["base"]["repo"]["full_name"]
         ]
-        latest = max(
-            runs, key=lambda r: (r["id"], r.get("run_attempt", 1)), default=None
-        )
-        if latest is None or latest.get("conclusion") != "success":
-            reasons.append("Waiting for successful " + path)
+        for event in ("pull_request", "push"):
+            matching = [run for run in runs if run["event"] == event]
+            latest = max(
+                matching,
+                key=lambda run: (run["id"], run.get("run_attempt", 1)),
+                default=None,
+            )
+            if latest is None and event == "push":
+                continue
+            if (
+                latest is None
+                or latest.get("status") != "completed"
+                or latest.get("conclusion") != "success"
+            ):
+                reasons.append("Waiting for successful " + event + " " + path)
     return reasons
 
 
@@ -140,10 +151,19 @@ def requests_changes(result):
     )
 
 
+
+def review_failed(api, prefix, head, scope, summary):
+    check(api, prefix, REVIEW_CHECK, head, "failure", summary, scope)
+    check(api, prefix, GATE_CHECK, head, "failure",
+          "No complete review is available.")
+
 def process(api, repository, number, fresh=False):
     prefix = f"/repos/{ORG}/{repository}"
     pr = api.request(f"{prefix}/pulls/{number}")
-    if pr["state"] != "open" or pr["base"]["ref"] != "main":
+    if pr["base"]["ref"] != "main":
+        return
+    if pr["state"] != "open":
+        audit_merged(api, prefix, pr, repository)
         return
     if pr.get("draft"):
         return
@@ -219,24 +239,14 @@ def process(api, repository, number, fresh=False):
                 result = run_review(
                     pr["html_url"], Path(directory) / "review.json"
                 )
+        except (ReviewInputError, ReviewExecutionError) as error:
+            review_failed(api, prefix, head, scope, str(error))
+            return
         except Exception:
-            check(
-                api,
-                prefix,
-                REVIEW_CHECK,
-                head,
-                "failure",
-                "Astra review failed or returned incomplete output. Retry the "
-                "workflow; automatic merging remains blocked.",
-                scope,
-            )
-            check(
-                api,
-                prefix,
-                GATE_CHECK,
-                head,
-                "failure",
-                "No complete review is available.",
+            review_failed(
+                api, prefix, head, scope,
+                "Astra review failed or returned incomplete output. "
+                "Automatic merging remains blocked.",
             )
             return
         current = api.request(f"{prefix}/pulls/{number}")
@@ -277,8 +287,10 @@ def process(api, repository, number, fresh=False):
         )
     reviews = api.pages(f"{prefix}/pulls/{number}/reviews")
     blockers = review_blockers(result)
-    if any(not file.get("patch") for file in files):
-        blockers.append("Unassessed coverage: binary or omitted file diff")
+    blockers.extend(validate_input_evidence(
+        pr, files, result.get("input_evidence") if isinstance(result, dict)
+        else None,
+    ))
     blockers.extend(workflows_ready(api, prefix, pr, repository))
     # Never dismiss or ignore a human's outstanding request for changes.
     latest = {}
@@ -366,6 +378,8 @@ def process(api, repository, number, fresh=False):
             method="PUT",
         )
     except GitHubError as error:
+        if merged_receipt(api, prefix, number, head, base):
+            return
         if error.status != 405:
             check(
                 api,
@@ -378,7 +392,9 @@ def process(api, repository, number, fresh=False):
             )
             raise
     else:
-        if merged.get("merged") is not True:
+        if not isinstance(merged, dict) or merged.get("merged") is not True:
+            if merged_receipt(api, prefix, number, head, base):
+                return
             check(
                 api,
                 prefix,
@@ -392,24 +408,147 @@ def process(api, repository, number, fresh=False):
 
     # Native auto-merge waits for CodeQL, conversation resolution and all other
     # branch rules. expectedHeadOid rejects a push during this transition.
-    response = api.request(
-        "/graphql",
-        {
-            "query": AUTO_MERGE_QUERY,
-            "variables": {"id": pr["node_id"], "head": head},
-        },
-    )
-    if response.get("errors"):
+    try:
+        response = api.request(
+            "/graphql",
+            {
+                "query": AUTO_MERGE_QUERY,
+                "variables": {"id": pr["node_id"], "head": head},
+            },
+        )
+        if response.get("errors"):
+            raise RuntimeError("GitHub rejected auto-merge")
+        queued = response.get("data", {}).get("enablePullRequestAutoMerge")
+        if (
+            not isinstance(queued, dict)
+            or not isinstance(queued.get("pullRequest"), dict)
+            or queued["pullRequest"].get("number") != number
+        ):
+            raise RuntimeError("GitHub did not confirm auto-merge")
+    except (GitHubError, RuntimeError, AttributeError, TypeError):
+        if merged_receipt(api, prefix, number, head, base):
+            return
         check(
-            api,
-            prefix,
-            GATE_CHECK,
-            head,
-            "action_required",
+            api, prefix, GATE_CHECK, head, "action_required",
             "GitHub rejected automatic merging. A maintainer must investigate "
             "the repository settings.",
         )
-        raise RuntimeError("GitHub rejected auto-merge")
+        raise
+
+
+
+HISTORICAL_AUDIT_POLICY = "c5b2a88b22579c05db82af17812ded02bab77d5d"
+AUDIT_APP_ID = 5550724
+
+
+def merged_receipt(api, prefix, number, head, base):
+    """Verify an existing Steward squash receipt without another merge."""
+    try:
+        current = api.request(f"{prefix}/pulls/{number}")
+        sha = current.get("merge_commit_sha")
+        if (
+            current.get("state") != "closed"
+            or current.get("merged") is not True
+            or (current.get("merged_by") or {}).get("login")
+            != os.environ["BOT_LOGIN"]
+            or current.get("head", {}).get("sha") != head
+            or current.get("base", {}).get("ref") != "main"
+            or not sha
+        ):
+            return False
+        merged = api.request(f"{prefix}/git/commits/{sha}")
+        source = api.request(f"{prefix}/git/commits/{head}")
+        tree = source.get("tree", {}).get("sha")
+        return (
+            merged.get("sha") == sha
+            and source.get("sha") == head
+            and [parent.get("sha") for parent in merged.get("parents", [])]
+            == [base]
+            and bool(tree)
+            and merged.get("tree", {}).get("sha") == tree
+        )
+    except (GitHubError, AttributeError, TypeError):
+        return False
+
+
+def audit_merged(api, prefix, pr, repository):
+    """Repair a false-red receipt after checking every historical proof."""
+    head = pr["head"]["sha"]
+    app_id = int(os.environ["PLUTO_REVIEW_APP_ID"])
+    author = pr.get("user") or {}
+    if (
+        app_id != AUDIT_APP_ID or pr.get("merged") is not True
+        or pr.get("state") != "closed"
+        or author.get("login") == os.environ["BOT_LOGIN"]
+        or not author.get("login")
+        or author.get("type") not in {"User", "Bot"}
+    ):
+        return
+    reviews = api.pages(f"{prefix}/pulls/{pr['number']}/reviews")
+    if steward_review_state(reviews, head) != "APPROVED":
+        return
+    files = inventory(api, prefix, pr)
+    checks = api.pages(
+        f"{prefix}/commits/{head}/check-runs?filter=all", "check_runs"
+    )
+    candidates = [
+        item for item in checks
+        if item.get("name") == REVIEW_CHECK
+        and item.get("head_sha") == head
+        and item.get("app", {}).get("id") == AUDIT_APP_ID
+    ]
+    if not candidates:
+        return
+    latest = max(candidates, key=lambda item: item["id"])
+    if (latest.get("status") != "completed"
+            or latest.get("conclusion") != "success"):
+        return
+    try:
+        evidence = json.loads(latest.get("output", {}).get("text", ""))
+    except (ValueError, TypeError):
+        return
+    if not isinstance(evidence, dict):
+        return
+    expected = {
+        "schema": CHECK_SCHEMA,
+        "repository": pr["base"]["repo"]["full_name"],
+        "number": pr["number"], "head": head,
+        "reviewer": os.environ["BOT_LOGIN"],
+    }
+    if any(evidence.get(key) != value for key, value in expected.items()):
+        return
+    policy = evidence.get("policy")
+    if policy not in {os.environ["POLICY_SHA"], HISTORICAL_AUDIT_POLICY}:
+        return
+    result = evidence.get("result")
+    if review_blockers(result):
+        return
+    if policy == HISTORICAL_AUDIT_POLICY:
+        # This signed historical profile had no recovered-input attestation.
+        # Admit only its complete positive review of ordinary provided patches.
+        if any(not file.get("patch") for file in files):
+            return
+    else:
+        historical_pr = {
+            **pr, "base": {**pr["base"], "sha": evidence.get("base")}
+        }
+        if validate_input_evidence(
+            historical_pr, files, result.get("input_evidence")
+        ):
+            return
+    if workflows_ready(api, prefix, pr, repository):
+        return
+    if not merged_receipt(
+        api, prefix, pr["number"], head, evidence.get("base")
+    ):
+        return
+    check(
+        api, prefix, GATE_CHECK, head, "success",
+        "Post-merge audit verified the existing Steward approval, signed "
+        "complete review, CI and exact squash receipt; no merge was attempted.",
+        {"head": head, "base": evidence.get("base"), "policy": policy,
+         "merge_commit": pr.get("merge_commit_sha"), "audited": True},
+    )
 
 
 def main():
@@ -449,7 +588,8 @@ if __name__ == "__main__":
         main()
     except Exception as error:
         print(
-            f"PR automation stopped safely ({type(error).__name__}); no bypass attempted.",
+            f"PR automation stopped safely ({type(error).__name__}); "
+            "no bypass attempted.",
             file=sys.stderr,
         )
         sys.exit(1)
