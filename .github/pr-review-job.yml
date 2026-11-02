@@ -64,6 +64,14 @@
       - name: Install locked reviewer dependencies
         working-directory: pr-agent
         run: uv sync --frozen --extra github --no-dev
+      - name: Verify pinned review planner before inference
+        env:
+          PLUTO_REVIEW_MODEL: ${{ vars.PLUTO_REVIEW_MODEL }}
+          LITELLM_LOCAL_MODEL_COST_MAP: "True"
+          LOG_LEVEL: ERROR
+        run: >-
+          pr-agent/.venv/bin/python -I
+          policy/scripts/pr_automation/check_pinned_review_plan.py
       - name: Review current PR and evaluate policy
         env:
           PLUTO_REVIEW_MODEL: ${{ vars.PLUTO_REVIEW_MODEL }}
