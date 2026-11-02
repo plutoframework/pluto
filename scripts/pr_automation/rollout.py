@@ -14,7 +14,7 @@ NODE = "249970729cb0ef3589644e2896645e5dc5ba9c38"
 PYTHON = "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0"
 
 
-def entrypoint(repository, revision):
+def entrypoint(repository, revision, job_template=None):
     import json
 
     names = {
@@ -51,9 +51,10 @@ on:
 permissions:
   contents: read
 jobs:
-""" + (ROOT / ".github/pr-review-job.yml").read_text().split("\n", 1)[
-        1
-    ].replace("${{ inputs.policy_revision }}", revision)
+""" + (
+        job_template if job_template is not None
+        else (ROOT / ".github/pr-review-job.yml").read_text()
+    ).split("\n", 1)[1].replace("${{ inputs.policy_revision }}", revision)
 
 
 RELAY = """name: Notify PR review

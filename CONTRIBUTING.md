@@ -66,6 +66,15 @@ for the policy, retries and credential boundaries.
 Push review fixes to the existing PR branch so the next review evaluates the
 updated change and revisits previous findings.
 
+Automation scripts and the canonical review-job template use immutable source
+pins. Commit those source changes first. Then regenerate the root review and
+security workflows with that code commit and make a separate pin-only commit.
+The ordinary automation CI check requires all workflow pins to agree and their
+script tree and job-template blob to equal the reviewed commit exactly. Workflow
+pin metadata may differ; executable sources may not. Run
+`python3 scripts/pr_automation/source_pins.py` after the pin-only commit to verify
+the committed Git objects locally.
+
 ## Send a focused contribution
 
 Explain the problem, resulting behavior, validation and any compatibility or
