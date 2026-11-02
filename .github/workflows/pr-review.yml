@@ -18,7 +18,11 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: pluto-review-${{ github.event.pull_request.head.ref || github.event.workflow_run.head_branch || inputs.pr_number }}
+  group: >-
+    pluto-review-${{
+      github.event.pull_request.head.sha ||
+      github.event.workflow_run.head_sha || inputs.pr_number
+    }}
   cancel-in-progress: false
 jobs:
   review:
@@ -42,7 +46,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: plutoframework/pluto
-          ref: c5b2a88b22579c05db82af17812ded02bab77d5d
+          ref: 25d1876a1870864fda08a9710f5945b79718b492
           path: policy
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -68,7 +72,7 @@ jobs:
           BOT_LOGIN: jackbot-advrsty
           PLUTO_REVIEW_APP_ID: ${{ vars.PLUTO_REVIEW_APP_ID }}
           TARGET_REPOSITORY: ${{ github.repository }}
-          POLICY_SHA: c5b2a88b22579c05db82af17812ded02bab77d5d
+          POLICY_SHA: 25d1876a1870864fda08a9710f5945b79718b492
           PR_AGENT_SOURCE: ${{ github.workspace }}/pr-agent
           ENABLE_AUTO_MERGE: ${{ vars.PLUTO_AUTO_MERGE }}
         run: python3 policy/scripts/pr_automation/controller.py
