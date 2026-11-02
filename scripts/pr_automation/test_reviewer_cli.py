@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from reviewer_cli import attested_reviewer, configure_snapshot_filter, main
+from review_diagnostics import Recorder, diagnostic_reviewer
 
 
 class FakeReviewer:
@@ -48,16 +49,50 @@ class InputPlanTests(unittest.TestCase):
         })
         flags.isolated = True
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
-            os.environ, {"PLUTO_REVIEW_INPUT_REPORT": f"{tmp}/input.json"}
+            os.environ, {
+                "PLUTO_REVIEW_INPUT_REPORT": f"{tmp}/input.json",
+                "PLUTO_REVIEW_DIAGNOSTICS_REPORT": f"{tmp}/diagnostics.json",
+            }
         ), patch("reviewer_cli.sys.flags", flags), patch(
             "reviewer_cli.importlib.import_module",
             side_effect=modules.__getitem__,
         ):
             self.assertEqual(main(), 0)
         self.assertIsNot(tools.PRReviewer, FakeReviewer)
+        self.assertEqual(tools.PRReviewer.__mro__[1].__name__,
+                         "DiagnosticReviewer")
         self.assertIs(agent.PRReviewer, tools.PRReviewer)
         for target in agent.command2class.values():
             self.assertIs(target, tools.PRReviewer)
+
+    def test_input_guard_remains_outside_diagnostics_before_inference(self):
+        class Completing(FakeReviewer):
+            def __init__(self):
+                super().__init__()
+                self.ai_handler = SimpleNamespace(chat_completion=self.complete)
+            async def complete(self):
+                return "local result", "stop"
+            async def _get_prediction(self, *_args, **_kwargs):
+                self.calls += 1
+                return await self.ai_handler.chat_completion()
+        with tempfile.TemporaryDirectory() as directory:
+            recorder = Recorder(Path(directory) / "diagnostics.json")
+            wrapped = attested_reviewer(
+                diagnostic_reviewer(Completing, recorder),
+                lambda _: {"evidence": {"complete": True}},
+                Path(directory) / "input.json", lambda _: "safe reason",
+            )
+            rejected = wrapped()
+            rejected._chunked_remaining_files_list = ["omitted.py"]
+            with self.assertRaises(RuntimeError):
+                asyncio.run(rejected._get_prediction("model"))
+            self.assertEqual(recorder.records, [])
+            self.assertEqual(rejected.calls, 0)
+            accepted = wrapped()
+            self.assertEqual(asyncio.run(accepted._get_prediction("model")),
+                             ("local result", "stop"))
+            self.assertEqual([item["stage"] for item in recorder.records],
+                             ["request", "response"])
 
     def test_filename_cannot_exempt_changed_text_from_review(self):
         handler = SimpleNamespace(_is_valid_file=lambda *_args: False)

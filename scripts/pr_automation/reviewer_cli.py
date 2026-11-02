@@ -79,8 +79,19 @@ def main():
         importlib.import_module("pr_agent.algo.language_handler")
     )
     reviewer = importlib.import_module("pr_agent.tools.pr_reviewer")
+    specification = importlib.util.spec_from_file_location(
+        "pluto_review_diagnostics",
+        Path(__file__).with_name("review_diagnostics.py"),
+    )
+    diagnostics = importlib.util.module_from_spec(specification)
+    sys.modules[specification.name] = diagnostics
+    specification.loader.exec_module(diagnostics)
+    recorder = diagnostics.Recorder(Path(
+        os.environ["PLUTO_REVIEW_DIAGNOSTICS_REPORT"]
+    ))
+    observed = diagnostics.diagnostic_reviewer(reviewer.PRReviewer, recorder)
     wrapped = attested_reviewer(
-        reviewer.PRReviewer,
+        observed,
         inputs.attest_provider,
         path,
         reviewer._review_failure_comment,

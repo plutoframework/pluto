@@ -63,12 +63,25 @@ class ReviewProcessTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = str(Path(tmp).resolve())
             output = Path(tmp) / "review.json"
+            output.with_suffix(".input.json").write_text(
+                json.dumps({"evidence": {"complete": True}})
+            )
+            output.with_suffix(".diagnostics.json").write_text(
+                json.dumps({"schema": 1, "records": []})
+            )
 
             def process(command, **kwargs):
                 self.assertEqual(command[:2], [f"{tmp}/.venv/bin/python", "-I"])
                 self.assertTrue(command[2].endswith("/reviewer_cli.py"))
                 self.assertEqual(kwargs["cwd"], Path(tmp))
                 sidecar = Path(kwargs["env"]["PLUTO_REVIEW_INPUT_REPORT"])
+                diagnostics = Path(
+                    kwargs["env"]["PLUTO_REVIEW_DIAGNOSTICS_REPORT"]
+                )
+                self.assertNotEqual(diagnostics, sidecar)
+                self.assertNotEqual(diagnostics, output)
+                self.assertFalse(diagnostics.exists())
+                self.assertFalse(sidecar.exists())
                 if report is not None:
                     sidecar.write_text(json.dumps(report))
                 if result is not None:
@@ -104,6 +117,23 @@ class ReviewProcessTests(unittest.TestCase):
                 ReviewExecutionError
             ):
                 self.exercise(report, {"review": {}}, code)
+
+    def test_safe_diagnostics_keep_input_error_priority(self):
+        diagnostics = {"schema": 1, "records": [
+            {"stage": "request", "event": "error", "exception": "APIError",
+             "http_status": 503},
+            {"stage": "response", "event": "ok", "finish_reason": "length",
+             "response_characters": 10},
+        ]}
+        with patch("review.safe_report", return_value=diagnostics):
+            with self.assertRaises(ReviewExecutionError) as error:
+                self.exercise({"evidence": {}}, {"review": {}}, 1)
+            self.assertIn("503", str(error.exception))
+            self.assertIn("APIError", str(error.exception))
+            self.assertIn("length", str(error.exception))
+            with self.assertRaises(ReviewInputError) as error:
+                self.exercise({"input_error": "Rejected input plan"}, None, 1)
+            self.assertEqual(str(error.exception), "Rejected input plan")
 
     def test_successful_process_without_review_output_is_rejected(self):
         with self.assertRaises(ReviewExecutionError):

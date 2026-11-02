@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from review_diagnostics import safe_report
+
 
 def environment():
     env = dict(os.environ)
@@ -118,6 +120,18 @@ class ReviewExecutionError(RuntimeError):
     """Only predefined, sanitized failure reasons cross this boundary."""
 
 
+def _diagnostic_summary(report):
+    selected = []
+    for stage in ("request", "response", "planning", "parse"):
+        records = [item for item in report["records"] if item["stage"] == stage]
+        errors = [item for item in records if item["event"] == "error"]
+        if errors or records:
+            selected.append((errors or records)[-1])
+    if not selected:
+        return " Safe diagnostics unavailable."
+    return " Safe diagnostics: " + json.dumps(selected, sort_keys=True)
+
+
 def run(url, output):
     output = Path(output).resolve()
     output.unlink(missing_ok=True)
@@ -136,25 +150,50 @@ def run(url, output):
     input_report.unlink(missing_ok=True)
     env = environment()
     env["PLUTO_REVIEW_INPUT_REPORT"] = str(input_report)
+    diagnostic_report = output.with_suffix(".diagnostics.json")
+    diagnostic_report.unlink(missing_ok=True)
+    env["PLUTO_REVIEW_DIAGNOSTICS_REPORT"] = str(diagnostic_report)
+
     # PR-Agent errors can contain provider details. Keep raw subprocess logs out
     # of CI output; the controller publishes only sanitized failure messages.
-    result = subprocess.run(
-        command,
-        cwd=source,
-        env=env,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=900,
+    try:
+        result = subprocess.run(
+            command,
+            cwd=source,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=900,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        result = None
+    diagnostics = safe_report(diagnostic_report)
+    failed = (
+        result is None or result.returncode or not output.is_file()
+        or not input_report.is_file()
     )
+    if failed:
+        print(json.dumps(diagnostics))
     if not input_report.is_file():
         raise ReviewInputError("The reviewer produced no verified input report")
-    report = json.loads(input_report.read_text())
-    if report.get("input_error"):
-        raise ReviewInputError(report["input_error"])
-    if result.returncode or report.get("errors") or not output.is_file():
+    try:
+        report = json.loads(input_report.read_text())
+    except (OSError, ValueError, TypeError):
+        if not failed:
+            print(json.dumps(diagnostics))
+        raise ReviewInputError("Malformed verified input report") from None
+    if not isinstance(report, dict) or report.get("input_error"):
+        if not failed:
+            print(json.dumps(diagnostics))
+        reason = (report.get("input_error") if isinstance(report, dict)
+                  else "Malformed verified input report")
+        raise ReviewInputError(reason)
+    if failed or report.get("errors"):
+        if not failed:
+            print(json.dumps(diagnostics))
         reasons = report.get("errors", [])
         reason = reasons[0] if reasons else "No complete review was produced"
-        raise ReviewExecutionError(reason)
+        raise ReviewExecutionError(reason + _diagnostic_summary(diagnostics))
     data = json.loads(output.read_text())
     if (not isinstance(data, dict)
             or not isinstance(report.get("evidence"), dict)):

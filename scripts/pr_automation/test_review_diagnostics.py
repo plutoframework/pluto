@@ -194,10 +194,15 @@ class DiagnosticTests(unittest.TestCase):
                 return_value=SimpleNamespace(returncode=0),
             ),
             patch.object(Path, "is_file", return_value=True),
-            patch.object(Path, "read_text", return_value=json.dumps(expected)),
+            patch.object(Path, "read_text", side_effect=lambda path: json.dumps(
+                {"evidence": {"complete": True}}
+                if path.name.endswith(".input.json") else expected
+            ), autospec=True),
             contextlib.redirect_stdout(stream),
         ):
-            self.assertEqual(run("https://example.test/pr/1", output), expected)
+            self.assertEqual(run("https://example.test/pr/1", output), {
+                **expected, "input_evidence": {"complete": True},
+            })
         self.assertEqual(stream.getvalue(), "")
         self.assertFalse(output.exists())
 
