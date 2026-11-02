@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from review_diagnostics import safe_report
+
 
 def environment():
     env = dict(os.environ)
@@ -109,8 +111,14 @@ def run(url, output):
     output = Path(output).resolve()
     output.unlink(missing_ok=True)
     source = Path(os.environ["PR_AGENT_SOURCE"]).resolve()
+    report = output.with_suffix(".diagnostics.json")
+    report.unlink(missing_ok=True)
+    env = environment()
+    env["PLUTO_REVIEW_DIAGNOSTICS_REPORT"] = str(report)
     command = [
-        str(source / ".venv/bin/pr-agent"),
+        str(source / ".venv/bin/python"),
+        "-I",
+        str(Path(__file__).with_name("review_diagnostics.py")),
         "--pr_url",
         url,
         "--json-output",
@@ -119,15 +127,20 @@ def run(url, output):
     ]
     # PR-Agent errors can contain provider details. Keep raw subprocess logs out
     # of CI output; the controller publishes only sanitized failure messages.
-    result = subprocess.run(
-        command,
-        cwd=source,
-        env=environment(),
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        timeout=900,
-    )
+    try:
+        result = subprocess.run(
+            command,
+            cwd=source,
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=900,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        print(json.dumps(safe_report(report)))
+        raise RuntimeError("PR-Agent did not produce a complete review") from None
     if result.returncode or not output.is_file():
+        print(json.dumps(safe_report(report)))
         raise RuntimeError("PR-Agent did not produce a complete review")
     return json.loads(output.read_text())
 
