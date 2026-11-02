@@ -18,10 +18,11 @@ def environment():
             "GITHUB__AGENT_LOGIN": os.environ["BOT_LOGIN"],
             "CONFIG__MODEL": "openai/openai/gpt-6-astra",
             "CONFIG__CUSTOM_MODEL_MAX_TOKENS": "128000",
+            "CONFIG__MAX_MODEL_TOKENS": "96000",
             "CONFIG__REASONING_EFFORT": "high",
             "CONFIG__AI_TIMEOUT": "600",
             "CONFIG__RETRY_SAME_MODEL_ON_TIMEOUT": "false",
-            # Leave prompt space within PR-Agent's 32k total token budget.
+            # Keep 16k reply headroom within the explicit review budget.
             "CONFIG__MAX_OUTPUT_TOKENS": "16384",
             "CONFIG__ADDITIONAL_REASONING_EFFORT_MODELS": '["openai/openai/gpt-6-astra"]',
             "CONFIG__FALLBACK_MODELS": "[]",
