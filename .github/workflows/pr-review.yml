@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: plutoframework/pluto
-          ref: b6fce2d468e93f86be44f3eb2d36b68f23d3c6a9
+          ref: d5181131535c78a5a119fb8f97ba154b42f2f63c
           path: policy
           persist-credentials: false
       - name: Resolve current pull requests
@@ -72,7 +72,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: plutoframework/pluto
-          ref: b6fce2d468e93f86be44f3eb2d36b68f23d3c6a9
+          ref: d5181131535c78a5a119fb8f97ba154b42f2f63c
           path: policy
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -88,6 +88,14 @@ jobs:
       - name: Install locked reviewer dependencies
         working-directory: pr-agent
         run: uv sync --frozen --extra github --no-dev
+      - name: Verify pinned review planner before inference
+        env:
+          PLUTO_REVIEW_MODEL: ${{ vars.PLUTO_REVIEW_MODEL }}
+          LITELLM_LOCAL_MODEL_COST_MAP: "True"
+          LOG_LEVEL: ERROR
+        run: >-
+          pr-agent/.venv/bin/python -I
+          policy/scripts/pr_automation/check_pinned_review_plan.py
       - name: Review current PR and evaluate policy
         env:
           PLUTO_REVIEW_MODEL: ${{ vars.PLUTO_REVIEW_MODEL }}
@@ -101,7 +109,7 @@ jobs:
           TARGET_REPOSITORY: ${{ github.repository }}
           RESOLVED_PR_NUMBER: ${{ matrix.number }}
           RESOLVED_HEAD_SHA: ${{ matrix.head }}
-          POLICY_SHA: b6fce2d468e93f86be44f3eb2d36b68f23d3c6a9
+          POLICY_SHA: d5181131535c78a5a119fb8f97ba154b42f2f63c
           PR_AGENT_SOURCE: ${{ github.workspace }}/pr-agent
           ENABLE_AUTO_MERGE: ${{ vars.PLUTO_AUTO_MERGE }}
         run: python3 policy/scripts/pr_automation/controller.py
