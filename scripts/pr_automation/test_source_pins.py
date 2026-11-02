@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from rollout import entrypoint, security
+from policy import REPOSITORIES
 
 from source_pins import SOURCES, verify, workflow_pin
 
@@ -61,6 +62,19 @@ class SourcePinTests(unittest.TestCase):
                 with self.assertRaises((ValueError,
                                         subprocess.CalledProcessError)):
                     verify("unused", self.runner(mutation))
+
+    def test_supported_generated_review_yaml_stays_within_80_columns(self):
+        template = (Path(__file__).resolve().parents[2]
+                    / ".github/pr-review-job.yml").read_text()
+        outputs = {"template": template}
+        outputs.update({
+            repository: entrypoint(repository, PIN)
+            for repository in REPOSITORIES
+        })
+        for label, text in outputs.items():
+            for number, line in enumerate(text.splitlines(), 1):
+                with self.subTest(output=label, line=number):
+                    self.assertLessEqual(len(line), 80)
 
     def test_all_four_live_locations_require_the_same_full_commit(self):
         good = workflow([PIN, PIN]) + "  POLICY_SHA: " + PIN + "\n"
