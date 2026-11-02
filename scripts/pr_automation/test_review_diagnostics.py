@@ -18,6 +18,17 @@ from review_diagnostics import Recorder, diagnostic_reviewer, main, safe_report
 SECRET = "credential-and-private-response"
 
 
+class MemoryReport:
+    def __init__(self, value):
+        self.text = json.dumps(value)
+
+    def stat(self):
+        return SimpleNamespace(st_size=len(self.text.encode()))
+
+    def read_text(self):
+        return self.text
+
+
 class BadRequestError(RuntimeError):
     status_code = 400
 
@@ -76,7 +87,7 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(request["http_status"], 400)
         self.assertNotIn(SECRET, self.path.read_text())
 
-    def test_empty_truncation_and_generic_api_types_remain_distinguishable(self):
+    def test_truncation_and_generic_api_types_remain_distinct(self):
         for name in ("EmptyTruncatedResponseError", "APIError"):
             kind = type(name, (RuntimeError,), {})
             async def failed(**_kwargs):
@@ -115,12 +126,13 @@ class DiagnosticTests(unittest.TestCase):
         records = self.report()
         self.assertEqual(len(records), 80)
         self.assertNotIn(SECRET, self.path.read_text())
-        self.path.write_text(json.dumps({"schema": 1, "records": [{
+        hostile = MemoryReport({"schema": 1, "records": [{
             "stage": "request", "event": "error", "exception": SECRET,
             "http_status": 999, "response": SECRET, "prompt": SECRET,
-        }]}))
-        self.assertNotIn(SECRET, json.dumps(safe_report(self.path)))
-        self.assertNotIn("http_status", self.report()[0])
+        }]})
+        filtered = safe_report(hostile)
+        self.assertNotIn(SECRET, json.dumps(filtered))
+        self.assertNotIn("http_status", filtered["records"][0])
 
     def test_launcher_wraps_every_review_dispatch_alias(self):
         tools = SimpleNamespace(PRReviewer=FakeReviewer)
@@ -145,21 +157,25 @@ class DiagnosticTests(unittest.TestCase):
 
     def test_failed_process_prints_only_safe_metadata_and_stays_failed(self):
         output = self.path.with_name("result.json")
+        hostile = MemoryReport({"schema": 1, "records": [{
+            "stage": "request", "event": "error", "exception": SECRET,
+            "http_status": 400, "response": SECRET,
+        }]})
         def failed(command, **kwargs):
             self.assertEqual(command[1], "-I")
-            report = Path(kwargs["env"]["PLUTO_REVIEW_DIAGNOSTICS_REPORT"])
-            report.write_text(json.dumps({"schema": 1, "records": [{
-                "stage": "request", "event": "error", "exception": SECRET,
-                "http_status": 400, "response": SECRET,
-            }]}))
+            self.assertIn("PLUTO_REVIEW_DIAGNOSTICS_REPORT", kwargs["env"])
             return SimpleNamespace(returncode=1)
         stream = io.StringIO()
-        with patch.dict(os.environ, {
-            "PR_AGENT_SOURCE": str(self.path.parent)
-        }), \
-                patch("review.environment", return_value={}), \
-                patch("review.subprocess.run", side_effect=failed), \
-                contextlib.redirect_stdout(stream):
+        with (
+            patch.dict(os.environ, {"PR_AGENT_SOURCE": str(self.path.parent)}),
+            patch("review.environment", return_value={}),
+            patch("review.subprocess.run", side_effect=failed),
+            patch(
+                "review.safe_report",
+                side_effect=lambda _: safe_report(hostile),
+            ),
+            contextlib.redirect_stdout(stream),
+        ):
             with self.assertRaises(RuntimeError):
                 run("https://github.com/example/repo/pull/1", output)
         self.assertNotIn(SECRET, stream.getvalue())
@@ -169,13 +185,40 @@ class DiagnosticTests(unittest.TestCase):
     def test_successful_process_preserves_result_without_printing(self):
         output = self.path.with_name("result.json")
         expected = {"review": {"value": SECRET}}
-        def complete(_command, **_kwargs):
-            output.write_text(json.dumps(expected))
-            return SimpleNamespace(returncode=0)
         stream = io.StringIO()
-        with patch.dict(os.environ, {"PR_AGENT_SOURCE": str(self.path.parent)}), \
-                patch("review.environment", return_value={}), \
-                patch("review.subprocess.run", side_effect=complete), \
-                contextlib.redirect_stdout(stream):
+        with (
+            patch.dict(os.environ, {"PR_AGENT_SOURCE": str(self.path.parent)}),
+            patch("review.environment", return_value={}),
+            patch(
+                "review.subprocess.run",
+                return_value=SimpleNamespace(returncode=0),
+            ),
+            patch.object(Path, "is_file", return_value=True),
+            patch.object(Path, "read_text", return_value=json.dumps(expected)),
+            contextlib.redirect_stdout(stream),
+        ):
             self.assertEqual(run("https://example.test/pr/1", output), expected)
         self.assertEqual(stream.getvalue(), "")
+        self.assertFalse(output.exists())
+
+    def test_write_failure_never_masks_sdk_results_or_original_exceptions(self):
+        async def failed(**_kwargs):
+            raise original
+        class Failed(FakeReviewer):
+            complete = staticmethod(failed)
+        with patch.object(Path, "write_text", side_effect=OSError("quota")):
+            recorder = Recorder(self.path)
+            wrapped = diagnostic_reviewer(FakeReviewer, recorder)
+            self.assertEqual(
+                asyncio.run(wrapped()._prepare_prediction("model")),
+                (SECRET, "length"),
+            )
+            self.assertEqual(wrapped._load_valid_review_yaml("ok")["review"],
+                             "ok")
+            with self.assertRaises(ValueError):
+                wrapped._load_valid_review_yaml("invalid")
+            original = BadRequestError(SECRET)
+            wrapped = diagnostic_reviewer(Failed, recorder)
+            with self.assertRaises(BadRequestError) as caught:
+                asyncio.run(wrapped()._prepare_prediction("model"))
+            self.assertIs(caught.exception, original)

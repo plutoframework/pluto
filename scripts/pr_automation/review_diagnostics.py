@@ -78,7 +78,13 @@ class Recorder:
         self.write()
 
     def write(self):
-        self.path.write_text(json.dumps({"schema": 1, "records": self.records}))
+        try:
+            self.path.write_text(json.dumps({
+                "schema": 1, "records": self.records,
+            }))
+        except Exception:
+            # Observability must not alter an SDK result or replace its error.
+            pass
 
     def record(self, stage, event, **metadata):
         if self.counts.get(stage, 0) >= 20:
