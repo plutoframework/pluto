@@ -18,16 +18,6 @@
 /scripts/check-examples.py @DavidHoenisch
 /scripts/commentspacing/main.go @DavidHoenisch
 /scripts/commentspacing/main_test.go @DavidHoenisch
-/scripts/pr_automation/controller.py @DavidHoenisch
-/scripts/pr_automation/github.py @DavidHoenisch
-/scripts/pr_automation/policy.py @DavidHoenisch
-/scripts/pr_automation/protect.py @DavidHoenisch
-/scripts/pr_automation/review.py @DavidHoenisch
-/scripts/pr_automation/rollout.py @DavidHoenisch
-/scripts/pr_automation/security.py @DavidHoenisch
-/scripts/pr_automation/test_controller.py @DavidHoenisch
-/scripts/pr_automation/test_policy.py @DavidHoenisch
-/scripts/pr_automation/test_review.py @DavidHoenisch
 /scripts/record-demo.py @DavidHoenisch
 /scripts/render-demo.py @DavidHoenisch
 /skills/ @DavidHoenisch
