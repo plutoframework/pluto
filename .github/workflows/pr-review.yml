@@ -42,7 +42,7 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
         with:
           repository: plutoframework/pluto
-          ref: 61a51af6c5b4c0a6f97e160e7d79515eeaeed6a5
+          ref: 8974ec5e5b320880382b210e598fa140d3b200ad
           path: policy
           persist-credentials: false
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
@@ -68,7 +68,7 @@ jobs:
           BOT_LOGIN: jackbot-advrsty
           PLUTO_REVIEW_APP_ID: ${{ vars.PLUTO_REVIEW_APP_ID }}
           TARGET_REPOSITORY: ${{ github.repository }}
-          POLICY_SHA: 61a51af6c5b4c0a6f97e160e7d79515eeaeed6a5
+          POLICY_SHA: 8974ec5e5b320880382b210e598fa140d3b200ad
           PR_AGENT_SOURCE: ${{ github.workspace }}/pr-agent
           ENABLE_AUTO_MERGE: ${{ vars.PLUTO_AUTO_MERGE }}
         run: python3 policy/scripts/pr_automation/controller.py
