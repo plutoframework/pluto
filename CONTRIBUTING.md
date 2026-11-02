@@ -55,16 +55,9 @@ copies in library and CLI repositories synchronized. Run
 
 ## Pull request review
 
-Changes to `main` use pull requests. The independent Steward account can
-approve and merge after CI, security checks and a complete Astra review pass.
-Sensitive code and tooling changes use the same required checks; they do not
-require a separate human voter. Unresolved findings, incomplete reviews and
-outstanding human requests for changes remain blocking. See the
-[product guide](https://plutoframework.github.io/pluto-site/docs/maintainers/pull-requests.md)
-for the policy, retries and credential boundaries.
-
-Push review fixes to the existing PR branch so the next review evaluates the
-updated change and revisits previous findings.
+Changes to `main` use pull requests with independent human approval. Required CI,
+formatting, tests, dependency security checks and CodeQL must pass. Address review
+findings on the existing branch. AI review and automatic merging are disabled.
 
 ## Send a focused contribution
 
