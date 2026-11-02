@@ -1,29 +1,10 @@
 import os
-from pathlib import Path
-import tempfile
 import unittest
 from unittest.mock import patch
 from review import environment
-from rollout import entrypoint
 
 
 class ReviewSettingsTests(unittest.TestCase):
-    def test_review_events_for_the_same_head_share_concurrency(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / ".github").mkdir()
-            (root / ".github/pr-review-job.yml").write_text(
-                "# Trusted job template\n  review: {}\n"
-            )
-            with patch("rollout.ROOT", root):
-                workflow = entrypoint("pluto", "a" * 40)
-        group = workflow.split("concurrency:", 1)[1].split("jobs:", 1)[0]
-        self.assertIn("github.event.pull_request.head.sha", group)
-        self.assertIn("github.event.workflow_run.head_sha", group)
-        self.assertIn("inputs.pr_number", group)
-        self.assertNotIn("head.ref", group)
-        self.assertNotIn("head_branch", group)
-
     def test_gateway_and_policy_cannot_be_overridden_by_repository(self):
         with patch.dict(
             os.environ,

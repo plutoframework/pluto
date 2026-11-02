@@ -50,11 +50,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: >-
-    pluto-review-${{{{
-      github.event.pull_request.head.sha ||
-      github.event.workflow_run.head_sha || inputs.pr_number
-    }}}}
+  group: pluto-review-${{{{ github.event.pull_request.head.ref || github.event.workflow_run.head_branch || inputs.pr_number }}}}
   cancel-in-progress: false
 jobs:
 """ + (ROOT / ".github/pr-review-job.yml").read_text().split("\n", 1)[
