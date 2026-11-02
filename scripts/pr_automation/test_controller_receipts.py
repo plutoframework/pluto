@@ -246,15 +246,22 @@ class ReceiptTests(unittest.TestCase):
         for state in ("failure", None, "cancelled"):
             self.api.push = state
             if state is None:
-                # A queued push still exists and must not be mistaken for none.
-                with patch.object(self.api, "pages", return_value=[{
-                    "id": 2, "event": "push", "head_sha": HEAD,
-                    "path": ".github/workflows/check.yml", "status": "queued",
-                    "repository": self.api.pr["base"]["repo"],
-                }]):
-                    self.assertTrue(workflows_ready(
+                # Keep canonical PR CI green so only the queued push blocks.
+                original = self.api.pages
+                def runs(path, key=None):
+                    values = original(path, key)
+                    return values + [{
+                        **values[0], "id": 2, "event": "push",
+                        "status": "queued", "conclusion": None,
+                    }]
+                with patch.object(self.api, "pages", side_effect=runs):
+                    blockers = workflows_ready(
                         self.api, "/repos/plutoframework/pluto-core",
-                        self.api.pr, "pluto-core"))
+                        self.api.pr, "pluto-core")
+                    self.assertTrue(blockers)
+                    self.assertTrue(
+                        all("push" in reason for reason in blockers)
+                    )
             else:
                 self.assertTrue(workflows_ready(
                     self.api, "/repos/plutoframework/pluto-core",
