@@ -76,6 +76,21 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(request["http_status"], 400)
         self.assertNotIn(SECRET, self.path.read_text())
 
+    def test_empty_truncation_and_generic_api_types_remain_distinguishable(self):
+        for name in ("EmptyTruncatedResponseError", "APIError"):
+            kind = type(name, (RuntimeError,), {})
+            async def failed(**_kwargs):
+                raise kind(SECRET)
+            class Failed(FakeReviewer):
+                complete = staticmethod(failed)
+            wrapped = diagnostic_reviewer(Failed, self.recorder)
+            with self.assertRaises(kind):
+                asyncio.run(wrapped()._get_prediction("model"))
+            errors = [r for r in self.report() if r["stage"] == "request"
+                      and r["event"] == "error"]
+            self.assertEqual(errors[-1]["exception"], name)
+            self.assertNotIn(SECRET, self.path.read_text())
+
     def test_planning_before_request_and_classmethod_parse_are_distinct(self):
         class Planning(FakeReviewer):
             async def _get_prediction(self, *_args, **_kwargs):

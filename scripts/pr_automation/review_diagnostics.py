@@ -10,6 +10,7 @@ STAGES = {"request", "response", "planning", "parse"}
 EVENTS = {"start", "ok", "error"}
 FINISH = {"stop", "length", "content_filter", "tool_calls", "other"}
 ERRORS = {
+    "APIError", "EmptyTruncatedResponseError",
     "BadRequestError", "RateLimitError", "AuthenticationError",
     "APIConnectionError", "APITimeoutError", "ContextWindowExceededError",
     "InternalServerError", "ServiceUnavailableError",
