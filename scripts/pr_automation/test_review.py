@@ -17,7 +17,6 @@ class ReviewSettingsTests(unittest.TestCase):
                 "REVIEW_TOKEN": "synthetic",
                 "BOT_LOGIN": "jackbot-advrsty",
                 "CONFIG__USE_REPO_SETTINGS_FILE": "true",
-                "CONFIG__MAX_MODEL_TOKENS": "32",
                 "CONFIG__FALLBACK_MODELS": '["weak-model"]',
                 "CONFIG__MAX_MODEL_TOKENS": "32000",
                 "BAD_EXTENSIONS__DEFAULT": '["go", "sum"]',
