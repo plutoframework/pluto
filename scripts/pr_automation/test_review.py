@@ -17,6 +17,7 @@ class ReviewSettingsTests(unittest.TestCase):
                 "REVIEW_TOKEN": "synthetic",
                 "BOT_LOGIN": "jackbot-advrsty",
                 "CONFIG__USE_REPO_SETTINGS_FILE": "true",
+                "CONFIG__MAX_MODEL_TOKENS": "32",
                 "CONFIG__FALLBACK_MODELS": '["weak-model"]',
                 "CONFIG__MAX_MODEL_TOKENS": "32000",
                 "BAD_EXTENSIONS__DEFAULT": '["go", "sum"]',
@@ -30,6 +31,12 @@ class ReviewSettingsTests(unittest.TestCase):
             env = environment()
         self.assertEqual(env["OPENAI__API_BASE"], "https://gpurouter.io/v1")
         self.assertEqual(env["CONFIG__MODEL"], "openai/openai/gpt-6-astra")
+        self.assertEqual(env["CONFIG__MAX_MODEL_TOKENS"], "96000")
+        self.assertLessEqual(
+            int(env["CONFIG__MAX_MODEL_TOKENS"])
+            + int(env["CONFIG__MAX_OUTPUT_TOKENS"]),
+            int(env["CONFIG__CUSTOM_MODEL_MAX_TOKENS"]),
+        )
         self.assertEqual(env["CONFIG__USE_REPO_SETTINGS_FILE"], "false")
         self.assertEqual(env["CONFIG__FALLBACK_MODELS"], "[]")
         self.assertEqual(env["CONFIG__MAX_MODEL_TOKENS"], "96000")
