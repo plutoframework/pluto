@@ -1,6 +1,7 @@
 """Exercise the locked SDK planner and host coverage gate without inference."""
 
 import asyncio
+import importlib.util
 import json
 from pathlib import Path
 import tempfile
@@ -13,9 +14,15 @@ def main():
 
     if not sys.flags.isolated:
         raise RuntimeError("The pinned planner probe requires isolated Python")
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
-    import review_diagnostics
-    import reviewer_cli
+    def load(name):
+        path = Path(__file__).with_name(name + ".py")
+        specification = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        return module
+
+    review_diagnostics = load("review_diagnostics")
+    reviewer_cli = load("reviewer_cli")
     from pr_agent.config_loader import get_settings
     from pr_agent.tools import pr_reviewer as sdk
 
