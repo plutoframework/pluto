@@ -410,6 +410,26 @@ class ControllerTests(unittest.TestCase):
         model.assert_not_called()
         self.assertTrue(self.api.merged)
 
+    def test_another_pr_on_the_same_commit_cannot_hide_cached_evidence(self):
+        for conclusion in ("success", "failure", "action_required"):
+            with self.subTest(conclusion=conclusion):
+                self.api = FakeAPI()
+                self.api.runs_succeed = False
+                self.run_gate()
+                own = next(c for c in reversed(self.api.checks)
+                           if c["name"] == REVIEW_CHECK)
+                own["conclusion"] = conclusion
+                other = copy.deepcopy(own)
+                evidence = json.loads(other["output"]["text"])
+                evidence["number"] = 8
+                other["output"]["text"] = json.dumps(evidence)
+                self.api.checks.append(other)
+                self.api.runs_succeed = True
+                with patch("controller.run_review") as model:
+                    process(self.api, "pluto-core", 7)
+                model.assert_not_called()
+                self.assertEqual(self.api.merged, conclusion == "success")
+
     def test_failed_or_interrupted_review_is_not_automatically_retried(self):
         with patch("controller.run_review", side_effect=RuntimeError):
             process(self.api, "pluto-core", 7)

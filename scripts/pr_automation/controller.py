@@ -111,6 +111,19 @@ def previous_result(api, prefix, pr, app_id):
             evidence = json.loads(item.get("output", {}).get("text", ""))
         except (TypeError, ValueError):
             return None
+        if isinstance(evidence, dict):
+            other_number = evidence.get("number")
+            if (
+                evidence.get("repository") == pr["base"]["repo"]["full_name"]
+                and isinstance(other_number, int)
+                and not isinstance(other_number, bool)
+                and other_number > 0
+                and other_number != pr["number"]
+            ):
+                # Check runs are shared by commit, but cached reviews belong
+                # to a PR. Another PR's receipt cannot hide this PR's latest
+                # complete, failed or still-running attempt.
+                continue
         if isinstance(evidence, dict) and all(
             evidence.get(key) == value
             for key, value in review_scope(pr).items()
@@ -441,6 +454,11 @@ def process(api, repository, number, fresh=False, expected_head=None):
 
 
 HISTORICAL_AUDIT_POLICY = "c5b2a88b22579c05db82af17812ded02bab77d5d"
+HISTORICAL_AUDIT_POLICIES = {
+    HISTORICAL_AUDIT_POLICY,
+    # Protected budget-only bootstrap, merged by Steward in Pluto PR #7.
+    "8974ec5e5b320880382b210e598fa140d3b200ad",
+}
 AUDIT_APP_ID = 5550724
 
 
@@ -521,12 +539,12 @@ def audit_merged(api, prefix, pr, repository):
     if any(evidence.get(key) != value for key, value in expected.items()):
         return
     policy = evidence.get("policy")
-    if policy not in {os.environ["POLICY_SHA"], HISTORICAL_AUDIT_POLICY}:
+    if policy not in HISTORICAL_AUDIT_POLICIES | {os.environ["POLICY_SHA"]}:
         return
     result = evidence.get("result")
     if review_blockers(result):
         return
-    if policy == HISTORICAL_AUDIT_POLICY:
+    if policy in HISTORICAL_AUDIT_POLICIES:
         # This signed historical profile had no recovered-input attestation.
         # Admit only its complete positive review of ordinary provided patches.
         if any(not file.get("patch") for file in files):

@@ -9,6 +9,7 @@ from unittest.mock import patch
 from controller import (
     AUDIT_APP_ID,
     HISTORICAL_AUDIT_POLICY,
+    HISTORICAL_AUDIT_POLICIES,
     process,
     audit_merged,
     workflows_ready,
@@ -167,6 +168,21 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(len(self.api.checks), 1)
         self.assertEqual(self.api.checks[0]["name"], GATE_CHECK)
         self.assertEqual(self.api.checks[0]["conclusion"], "success")
+
+    def test_only_explicitly_deployed_legacy_profiles_allow_receipt_repair(self):
+        for policy in HISTORICAL_AUDIT_POLICIES:
+            with self.subTest(policy=policy):
+                self.api = ReceiptAPI()
+                evidence = self.historical()
+                evidence["policy"] = policy
+                self.api.history[0]["output"]["text"] = json.dumps(evidence)
+                with patch("controller.run_review") as model:
+                    process(self.api, "pluto-core", 7)
+                model.assert_not_called()
+                self.assertEqual(len(self.api.checks), 1)
+                self.assertEqual(self.api.checks[0]["name"], GATE_CHECK)
+                self.assertEqual(self.api.merge_calls, 0)
+                self.assertEqual(self.api.queue_calls, 0)
 
     def test_current_policy_audit_requires_bound_input_attestation(self):
         for valid in (True, False):
