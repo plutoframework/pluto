@@ -13,6 +13,16 @@ jobs:
         with:
           python-version: "3.12"
       - run: python3 -m unittest discover -s scripts/pr_automation -v
+      - name: Check conformance source formatting
+        run: python3 scripts/check-conformance-style.py
+      - name: Test operation conformance runner without candidate dependencies
+        run: >-
+          PYTHONPATH=scripts python3 -m unittest
+          operation_conformance.test_runner -v
+      - name: Test frozen architecture baseline runner
+        run: >-
+          PYTHONPATH=scripts python3 -m unittest
+          architecture_baseline.test_runner -v
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
           go-version-file: go.mod

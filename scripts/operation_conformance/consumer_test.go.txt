@@ -1,0 +1,464 @@
+package conformance
+
+import (
+	"context"
+	"errors"
+	"os"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	auth "github.com/plutoframework/pluto-auth"
+	authmemory "github.com/plutoframework/pluto-auth/stores/memory"
+	cachememory "github.com/plutoframework/pluto-core/cache/memory"
+	"github.com/plutoframework/pluto-core/examples/shipments"
+	data "github.com/plutoframework/pluto-core/examples/shipments/postgres"
+	"github.com/plutoframework/pluto-core/examples/shipments/postgres/contract"
+	"github.com/plutoframework/pluto-core/examples/shipments/postgres/operations"
+	"github.com/plutoframework/pluto-core/state"
+	idem "github.com/plutoframework/pluto-core/stores/postgres"
+	jobs "github.com/plutoframework/pluto-jobs"
+	rbac "github.com/plutoframework/pluto-rbac"
+	identitygate "github.com/plutoframework/pluto-rbac/identity"
+)
+
+// Only composition holds the issuer and concrete adapter. The application entry
+// takes an opaque identity and the operation's private writer is a narrow port.
+type dispatchOperation struct {
+	gate    *identitygate.Gate
+	data    contract.DispatchData
+	machine *state.Machine[shipments.Status, shipments.Event, bool]
+}
+
+func (o *dispatchOperation) execute(
+	ctx context.Context,
+	identity *auth.Identity,
+	tenant, rawID, key string,
+) (contract.Result, error) {
+	input, err := shipments.NewDispatchInput(rawID, key)
+	if err != nil {
+		return contract.Result{}, err
+	}
+
+	var result contract.Result
+
+	err = o.gate.Within(
+		ctx,
+		identity,
+		tenant,
+		input.ID(),
+		func(ctx context.Context, execution *identitygate.Execution) error {
+			var err error
+
+			result, err = operations.Dispatch(
+				ctx,
+				execution,
+				o.data,
+				o.machine,
+				input,
+			)
+
+			return err
+		},
+	)
+
+	return result, err
+}
+
+type fixture struct {
+	pool      *pgxpool.Pool
+	manager   *auth.Manager
+	tokens    map[string]string
+	gate      *identitygate.Gate
+	data      *data.Data
+	operation *dispatchOperation
+	clock     atomic.Int64
+	allowed   atomic.Bool
+}
+
+func manager(t *testing.T, clock func() time.Time) *auth.Manager {
+	t.Helper()
+
+	store, err := authmemory.New(20)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	issuer, err := auth.New(store, auth.Config{TTL: time.Hour, Clock: clock})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return issuer
+}
+
+func setup(t *testing.T) *fixture {
+	t.Helper()
+
+	url := os.Getenv("PLUTO_OPERATION_DATABASE_URL")
+	if url == "" {
+		t.Fatal("isolated database required; skips forbidden")
+	}
+
+	admin, err := pgxpool.New(t.Context(), url)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(admin.Close)
+
+	name := "composed_" + jobs.NewID()
+
+	quoted := pgx.Identifier{name}.Sanitize()
+	if _, err := admin.Exec(t.Context(), "CREATE SCHEMA "+quoted); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() {
+		_, err := admin.Exec(
+			context.Background(),
+			"DROP SCHEMA "+quoted+" CASCADE",
+		)
+		if err != nil {
+			t.Error(err)
+		}
+	})
+
+	config, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	config.ConnConfig.RuntimeParams["search_path"] = name
+
+	pool, err := pgxpool.NewWithConfig(t.Context(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(pool.Close)
+
+	if _, err := pool.Exec(
+		t.Context(),
+		data.Schema+data.DeliverySchema+idem.Schema,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	f := &fixture{pool: pool, tokens: map[string]string{}}
+	f.clock.Store(time.Now().UnixNano())
+	f.allowed.Store(true)
+
+	f.manager = manager(
+		t,
+		func() time.Time { return time.Unix(0, f.clock.Load()) },
+	)
+	for _, subject := range []string{"alice", "bob"} {
+		issued, err := f.manager.Start(t.Context(), subject)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		f.tokens[subject] = issued.Token
+	}
+
+	policy, err := rbac.New(rbac.Definition{
+		Permissions: []rbac.Permission{
+			{
+				ID:          "shipments",
+				Name:        "Shipments",
+				Description: "Operate shipments",
+			},
+		},
+		Roles: []rbac.Role{
+			{
+				ID:          "operator",
+				Name:        "Operator",
+				Description: "Operate shipments",
+				Permissions: []rbac.PermissionID{"shipments"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	authorizer, err := rbac.NewAuthorizer(
+		policy,
+		rbac.RoleResolverFunc(
+			func(
+				_ context.Context,
+				subject string,
+				scope rbac.Scope,
+			) ([]rbac.RoleID, error) {
+				if !f.allowed.Load() || scope.TenantID != "north" {
+					return nil, nil
+				}
+
+				return []rbac.RoleID{"operator"}, nil
+			},
+		),
+		rbac.Options{RequireTenant: true},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	permission, err := authorizer.Require("shipments")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resource, err := permission.WithResourcePolicy(
+		rbac.ResourcePolicyFunc(
+			func(ctx context.Context, request rbac.Request, key string) error {
+				if request.Scope.TenantID != "north" {
+					return rbac.ErrForbidden
+				}
+
+				if key == data.CollectionResource {
+					return nil
+				}
+
+				var visible bool
+
+				err := pool.QueryRow(
+					ctx,
+					"SELECT EXISTS(SELECT 1 FROM shipment_visibility "+
+						"WHERE tenant_id=$1 AND shipment_id=$2 "+
+						"AND subject_id=$3)",
+					request.Scope.TenantID,
+					key,
+					request.SubjectID,
+				).
+					Scan(&visible)
+				if err != nil {
+					return err
+				}
+
+				if !visible {
+					return rbac.ErrForbidden
+				}
+
+				return nil
+			},
+		),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f.gate, err = identitygate.New(
+		f.manager,
+		resource,
+		identitygate.MembershipVerifierFunc(
+			func(_ context.Context, subject, tenant string) error {
+				if tenant != "north" ||
+					(subject != "alice" && subject != "bob") {
+					return rbac.ErrForbidden
+				}
+
+				return nil
+			},
+		),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	machine, err := shipments.NewLifecycle()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	memory, err := cachememory.New(cachememory.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f.data, err = data.NewData(
+		pool,
+		f.gate,
+		machine,
+		memory,
+		data.DataConfig{
+			App:         "composed",
+			Environment: "test",
+			CacheTTL:    time.Minute,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f.operation = &dispatchOperation{
+		gate:    f.gate,
+		data:    f.data,
+		machine: machine,
+	}
+
+	if _, err := pool.Exec(
+		t.Context(),
+		"INSERT INTO shipments VALUES "+
+			"('north','one','packed',0,true),"+
+			"('north','hidden','packed',0,true); "+
+			"INSERT INTO shipment_visibility VALUES ('north','one','alice')",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	return f
+}
+
+func (f *fixture) within(
+	t *testing.T,
+	actor, resource string,
+	run func(context.Context, *identitygate.Execution) error,
+) error {
+	t.Helper()
+
+	return f.manager.WithIdentity(
+		t.Context(),
+		f.tokens[actor],
+		func(ctx context.Context, identity *auth.Identity) error {
+			return f.gate.Within(ctx, identity, "north", resource, run)
+		},
+	)
+}
+
+func (f *fixture) dispatch(t *testing.T, key string) (contract.Result, error) {
+	t.Helper()
+
+	var result contract.Result
+
+	err := f.manager.WithIdentity(
+		t.Context(),
+		f.tokens["alice"],
+		func(ctx context.Context, identity *auth.Identity) error {
+			var err error
+
+			result, err = f.operation.execute(
+				ctx,
+				identity,
+				"north",
+				" one ",
+				key,
+			)
+
+			return err
+		},
+	)
+
+	return result, err
+}
+
+func assertCounts(t *testing.T, f *fixture, writes int) {
+	t.Helper()
+
+	for _, table := range []string{"shipment_dispatch_outbox", "pluto_jobs"} {
+		var count int
+		if err := f.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+table).
+			Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+
+		if count != writes {
+			t.Fatalf("%s rows=%d want=%d", table, count, writes)
+		}
+	}
+
+	var count int
+	if err := f.pool.QueryRow(
+		t.Context(),
+		"SELECT count(*) FROM pluto_idempotency WHERE completed",
+	).
+		Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+
+	if count != writes {
+		t.Fatalf("completed claims=%d", count)
+	}
+}
+
+func TestComposedNormalizedDispatch(t *testing.T) {
+	f := setup(t)
+	if _, err := operations.Dispatch(
+		t.Context(),
+		nil,
+		f.data,
+		f.operation.machine,
+		shipments.DispatchInput{},
+	); !errors.Is(
+		err,
+		shipments.ErrInput,
+	) {
+		t.Fatalf("zero private input=%v", err)
+	}
+
+	first, err := f.dispatch(t, "normalized-command")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if first.ShipmentID != "one" || first.Status != shipments.Dispatched ||
+		first.Version != 1 ||
+		first.JobID == "" {
+		t.Fatalf("result=%+v", first)
+	}
+
+	replay, err := f.dispatch(t, "normalized-command")
+	if err != nil || replay != first {
+		t.Fatalf("replay=%+v error=%v", replay, err)
+	}
+
+	assertCounts(t, f, 1)
+}
+
+// Keep the interface check near the composition that chooses the adapter.
+var _ contract.DispatchData = (*data.Data)(nil)
+
+func TestComposedExport500Cap(t *testing.T) {
+	f := setup(t)
+
+	// With the preexisting row this creates 501 visible records. The 500-row
+	// export must refuse the whole result, never truncate or leak hidden rows.
+	if _, err := f.pool.Exec(
+		t.Context(),
+		"INSERT INTO shipments\n "+
+			"SELECT 'north','bulk-'||lpad(n::text,4,'0'),'packed',0,true "+
+			"FROM generate_series(1,500)n;\n "+
+			"INSERT INTO shipment_visibility "+
+			"SELECT 'north',id,'alice' FROM shipments WHERE id LIKE 'bulk-%'",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	err := f.within(
+		t,
+		"alice",
+		data.CollectionResource,
+		func(ctx context.Context, execution *identitygate.Execution) error {
+			input, err := shipments.NewExportInput(500)
+			if err != nil {
+				return err
+			}
+
+			rows, err := f.data.Export(ctx, execution, input)
+			if !errors.Is(err, data.ErrExportLimit) || rows != nil {
+				t.Fatalf(
+					"500 row cap bypassed: rows=%d error=%v",
+					len(rows),
+					err,
+				)
+			}
+
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+}

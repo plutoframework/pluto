@@ -1,0 +1,103 @@
+{
+  "version": 1,
+  "revision": "a54f525318900a8f09983ed202f7c436ea2d494f",
+  "coverage": "Targeted frozen-baseline operation, lifecycle and recurring primitive failures; runtime guarantees are proved separately by candidate conformance.",
+  "expected": [
+    {
+      "id": "ARCH002",
+      "file": "pluto.toml",
+      "messageContains": "schema",
+      "line": 1
+    },
+    {
+      "id": "ARCH101",
+      "file": "internal/storage/postgres/jobs.go",
+      "line": 6,
+      "messageContains": "internal/background"
+    },
+    {
+      "id": "ARCH007",
+      "file": "scripts/check.sh",
+      "line": 1,
+      "messageContains": "canonical CLI check invocation is absent"
+    },
+    {
+      "id": "ARCH201",
+      "file": "internal/operations/access.go",
+      "line": 1,
+      "messageContains": "no declared managed operation boundary"
+    },
+    {
+      "id": "ARCH301",
+      "file": "internal/domain/model.go",
+      "line": 69,
+      "messageContains": "publicly mutable lifecycle field"
+    },
+    {
+      "id": "ARCH302",
+      "file": "internal/operations/purchases.go",
+      "line": 240,
+      "messageContains": "raw lifecycle decision escapes domain ownership"
+    },
+    {
+      "id": "ARCH303",
+      "file": "internal/storage/memory/store.go",
+      "line": 137,
+      "messageContains": "data entry accepts a raw lifecycle entity"
+    },
+    {
+      "id": "ARCH303",
+      "file": "internal/storage/postgres/transactions.go",
+      "line": 33,
+      "messageContains": "data entry accepts a raw lifecycle entity"
+    },
+    {
+      "id": "ARCH501",
+      "file": "internal/operations/purchases.go",
+      "line": 110,
+      "messageContains": "normalization capability is authored outside the domain owner"
+    },
+    {
+      "id": "ARCH502",
+      "file": "internal/operations/organization.go",
+      "line": 38,
+      "messageContains": "cache mechanics escape the data boundary"
+    },
+    {
+      "id": "ARCH503",
+      "file": "internal/pluto/idempotency.go",
+      "line": 14,
+      "messageContains": "HTTP replay lacks declared operation idempotency semantics"
+    },
+    {
+      "id": "ARCH504",
+      "file": "internal/operations/pagination.go",
+      "line": 34,
+      "messageContains": "collection finishing escapes the scoped data contract"
+    },
+    {
+      "id": "ARCH505",
+      "file": "internal/operations/purchases.go",
+      "line": 274,
+      "messageContains": "operation entry exposes an unbounded slice result"
+    },
+    {
+      "id": "ARCH506",
+      "file": "internal/background/audit.go",
+      "line": 28,
+      "messageContains": "job payload handling lacks a declared operation-bound effect"
+    },
+    {
+      "id": "ARCH211",
+      "file": "internal/background/audit.go",
+      "line": 26,
+      "messageContains": "worker handler binding exists outside a declared managed operation adapter"
+    },
+    {
+      "id": "ARCH212",
+      "file": "internal/operations/review.go",
+      "line": 60,
+      "messageContains": "agent tool binding exists outside a declared managed operation adapter"
+    }
+  ]
+}

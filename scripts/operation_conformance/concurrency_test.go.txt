@@ -1,0 +1,85 @@
+package conformance
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"testing"
+
+	auth "github.com/plutoframework/pluto-auth"
+	"github.com/plutoframework/pluto-core/examples/shipments"
+	data "github.com/plutoframework/pluto-core/examples/shipments/postgres"
+	"github.com/plutoframework/pluto-core/examples/shipments/postgres/contract"
+	identitygate "github.com/plutoframework/pluto-rbac/identity"
+)
+
+// This test port coordinates only reads; real Core operation/data code still
+// owns every claim, domain decision, SQL mutation and transaction participant.
+type simultaneousReads struct {
+	contract.DispatchData
+	ready sync.WaitGroup
+}
+
+func (p *simultaneousReads) Load(
+	ctx context.Context,
+	execution *identitygate.Execution,
+	id string,
+) (shipments.Snapshot, error) {
+	loaded, err := p.DispatchData.Load(ctx, execution, id)
+	p.ready.Done()
+	p.ready.Wait()
+
+	return loaded, err
+}
+
+func TestComposedCurrentGateCAS(t *testing.T) {
+	f := setup(t)
+	port := &simultaneousReads{DispatchData: f.data}
+	port.ready.Add(2)
+
+	operation := *f.operation
+	operation.data = port
+	results := make(chan error, 2)
+
+	var workers sync.WaitGroup
+	for _, key := range []string{"race-command-a", "race-command-b"} {
+		workers.Add(1)
+
+		go func(key string) {
+			defer workers.Done()
+
+			results <- f.manager.WithIdentity(
+				t.Context(),
+				f.tokens["alice"],
+				func(ctx context.Context, identity *auth.Identity) error {
+					_, err := operation.execute(
+						ctx, identity, "north", "one", key,
+					)
+
+					return err
+				},
+			)
+		}(key)
+	}
+
+	workers.Wait()
+	close(results)
+
+	success, stale := 0, 0
+
+	for err := range results {
+		if err == nil {
+			success++
+		} else if errors.Is(err, data.ErrConflict) {
+			stale++
+		} else {
+			t.Fatal(err)
+		}
+	}
+
+	if success != 1 || stale != 1 {
+		t.Fatalf("commits=%d stale=%d", success, stale)
+	}
+
+	assertCounts(t, f, 1)
+}
