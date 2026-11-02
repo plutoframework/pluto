@@ -90,7 +90,14 @@ def main():
             rejected = False
             try:
                 await action()
-            except RuntimeError:
+            except RuntimeError as error:
+                if str(error) != "Incomplete review input plan":
+                    raise
+                report = json.loads(
+                    (Path(directory) / "input.json").read_text()
+                )
+                if not report.get("input_error"):
+                    raise AssertionError("Missing coverage rejection evidence")
                 rejected = True
             if len(calls) != expected or rejected != (expected == 0):
                 raise AssertionError("Pinned planner case failed: " + name)
