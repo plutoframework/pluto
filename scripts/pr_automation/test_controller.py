@@ -9,7 +9,32 @@ from unittest.mock import patch
 from controller import process, previous_result
 from github import GitHubError
 from policy import CHECK_SCHEMA, REVIEW_CHECK
+from review import ReviewExecutionError, ReviewInputError
 from test_policy import CLEAN
+from review_inputs import inventory_digest
+
+HEAD = "a" * 40
+BASE = "b" * 40
+
+
+def with_input(api, result):
+    result = copy.deepcopy(result)
+    if not isinstance(result, dict):
+        return result
+    for file in api.files:
+        file.setdefault("status", "modified")
+        file.setdefault("sha", "f" * 40)
+    if any(not file.get("patch") for file in api.files):
+        return result
+    result["input_evidence"] = {
+        "schema": 1, "complete": True,
+        "repository": api.pr["base"]["repo"]["full_name"],
+        "number": api.pr["number"], "head": api.pr["head"]["sha"],
+        "base": api.pr["base"]["sha"], "merge_base": api.pr["base"]["sha"],
+        "inventory_digest": inventory_digest(api.files),
+        "file_count": len(api.files), "recovered": [], "empty": [],
+    }
+    return result
 
 
 class FakeAPI:
@@ -19,9 +44,9 @@ class FakeAPI:
             "node_id": "pr-node",
             "state": "open",
             "draft": False,
-            "head": {"sha": "head"},
+            "head": {"sha": HEAD},
             "base": {
-                "sha": "base",
+                "sha": BASE,
                 "ref": "main",
                 "repo": {"full_name": "plutoframework/pluto-core"},
             },
@@ -45,7 +70,7 @@ class FakeAPI:
             self.reads += 1
             value = copy.deepcopy(self.pr)
             if self.race and self.reads > 1:
-                value["head"]["sha"] = "new-head"
+                value["head"]["sha"] = "d" * 40
             return value
         if path.endswith("/permission"):
             return {"permission": "admin"}
@@ -103,6 +128,7 @@ class FakeAPI:
                     "path": ".github/workflows/" + file,
                     "repository": self.pr["base"]["repo"],
                     "conclusion": "success" if self.runs_succeed else "failure",
+                    "status": "completed",
                 }
             ]
         raise AssertionError(path)
@@ -126,12 +152,31 @@ class ControllerTests(unittest.TestCase):
     def run_gate(self, review=None):
         with patch(
             "controller.run_review",
-            return_value=CLEAN if review is None else review,
+            return_value=with_input(
+                self.api, CLEAN if review is None else review
+            ),
         ):
             process(self.api, "pluto-core", 7)
 
     def test_clean_routine_change_merges(self):
         self.run_gate()
+        self.assertTrue(self.api.merged)
+
+    def test_clean_review_without_input_attestation_never_merges(self):
+        with patch("controller.run_review", return_value=copy.deepcopy(CLEAN)):
+            process(self.api, "pluto-core", 7)
+        self.assertFalse(self.api.merged)
+        self.assertFalse(self.api.auto_enabled)
+        self.assertEqual(self.api.reviews, [])
+        self.assertIn("input", self.api.checks[-1]["output"]["summary"].lower())
+
+    def test_trusted_recovered_input_can_cover_missing_raw_patch(self):
+        result = with_input(self.api, CLEAN)
+        path = self.api.files[0]["filename"]
+        self.api.files[0].pop("patch")
+        result["input_evidence"]["recovered"] = [path]
+        with patch("controller.run_review", return_value=result):
+            process(self.api, "pluto-core", 7)
         self.assertTrue(self.api.merged)
 
     def test_pending_native_checks_queue_auto_merge(self):
@@ -177,7 +222,10 @@ class ControllerTests(unittest.TestCase):
                 )
                 result = copy.deepcopy(CLEAN)
                 result["review"]["risk_level"] = "high"
-                with patch("controller.run_review", return_value=result):
+                with patch(
+                    "controller.run_review",
+                    return_value=with_input(self.api, result),
+                ):
                     process(self.api, repository, 7)
                 self.assertTrue(self.api.merged)
                 self.assertEqual(self.api.reviews[-1]["state"], "APPROVED")
@@ -203,7 +251,7 @@ class ControllerTests(unittest.TestCase):
                             "id": 1,
                             "user": {"login": login, "type": "User"},
                             "state": "APPROVED",
-                            "commit_id": "head",
+                            "commit_id": HEAD,
                         }
                     ]
                     result = copy.deepcopy(CLEAN)
@@ -222,20 +270,23 @@ class ControllerTests(unittest.TestCase):
                 "id": 1,
                 "user": {"login": "owner", "type": "User"},
                 "state": "APPROVED",
-                "commit_id": "head",
+                "commit_id": HEAD,
             }
         ]
         self.run_gate()
         self.assertFalse(self.api.merged)
         self.assertIn(
-            "Unassessed coverage", self.api.checks[-1]["output"]["summary"]
+            "input", self.api.checks[-1]["output"]["summary"].lower()
         )
 
     def test_missing_or_malformed_review_never_merges(self):
         for result in (None, {}, [], {"review": {}}, {"coverage": {}}):
             with self.subTest(result=result):
                 self.api = FakeAPI()
-                with patch("controller.run_review", return_value=result):
+                with patch(
+                    "controller.run_review",
+                    return_value=with_input(self.api, result),
+                ):
                     process(self.api, "pluto-core", 7)
                 self.assertFalse(self.api.merged)
                 self.assertFalse(self.api.auto_enabled)
@@ -259,7 +310,8 @@ class ControllerTests(unittest.TestCase):
                 self.api = FakeAPI()
                 self.api.pr["user"] = author
                 with patch(
-                    "controller.run_review", return_value=CLEAN
+                    "controller.run_review",
+                    return_value=with_input(self.api, CLEAN),
                 ) as model:
                     process(self.api, "pluto-core", 7)
                 model.assert_not_called()
@@ -273,7 +325,7 @@ class ControllerTests(unittest.TestCase):
                 "id": 1,
                 "user": {"login": "owner", "type": "User"},
                 "state": "CHANGES_REQUESTED",
-                "commit_id": "head",
+                "commit_id": HEAD,
             }
         ]
         self.run_gate()
@@ -293,10 +345,13 @@ class ControllerTests(unittest.TestCase):
                 "id": 1,
                 "user": {"login": "owner", "type": "User"},
                 "state": "APPROVED",
-                "commit_id": "head",
+                "commit_id": HEAD,
             }
         ]
-        with patch("controller.run_review", return_value=CLEAN) as model:
+        with patch(
+            "controller.run_review",
+            return_value=with_input(self.api, CLEAN),
+        ) as model:
             process(self.api, "pluto-core", 7)
         model.assert_not_called()
         self.assertFalse(self.api.merged)
@@ -305,7 +360,10 @@ class ControllerTests(unittest.TestCase):
 
     def test_steward_authored_pr_never_spends_review_tokens(self):
         self.api.pr["user"]["login"] = "bot"
-        with patch("controller.run_review", return_value=CLEAN) as model:
+        with patch(
+            "controller.run_review",
+            return_value=with_input(self.api, CLEAN),
+        ) as model:
             process(self.api, "pluto-core", 7)
         model.assert_not_called()
         self.assertFalse(self.api.merged)
@@ -326,14 +384,51 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.api.checks[-1]["conclusion"], "failure")
         self.assertNotIn("private failure", json.dumps(self.api.checks))
 
+    def test_typed_safe_review_failures_explain_input_or_provider_blocker(self):
+        for error in (
+            ReviewInputError("The reviewer produced no verified input report"),
+            ReviewExecutionError("The review exhausted its input budget"),
+        ):
+            with self.subTest(error=error):
+                self.api = FakeAPI()
+                with patch("controller.run_review", side_effect=error):
+                    process(self.api, "pluto-core", 7)
+                self.assertFalse(self.api.merged)
+                self.assertEqual(self.api.checks[-2]["conclusion"], "failure")
+                self.assertEqual(self.api.checks[-2]["output"]["summary"],
+                                 str(error))
+
     def test_ci_completion_reuses_successful_review(self):
         self.api.runs_succeed = False
         self.run_gate()
         self.api.runs_succeed = True
-        with patch("controller.run_review", return_value=CLEAN) as model:
+        with patch(
+            "controller.run_review",
+            return_value=with_input(self.api, CLEAN),
+        ) as model:
             process(self.api, "pluto-core", 7)
         model.assert_not_called()
         self.assertTrue(self.api.merged)
+
+    def test_another_pr_on_the_same_commit_cannot_hide_cached_evidence(self):
+        for conclusion in ("success", "failure", "action_required"):
+            with self.subTest(conclusion=conclusion):
+                self.api = FakeAPI()
+                self.api.runs_succeed = False
+                self.run_gate()
+                own = next(c for c in reversed(self.api.checks)
+                           if c["name"] == REVIEW_CHECK)
+                own["conclusion"] = conclusion
+                other = copy.deepcopy(own)
+                evidence = json.loads(other["output"]["text"])
+                evidence["number"] = 8
+                other["output"]["text"] = json.dumps(evidence)
+                self.api.checks.append(other)
+                self.api.runs_succeed = True
+                with patch("controller.run_review") as model:
+                    process(self.api, "pluto-core", 7)
+                model.assert_not_called()
+                self.assertEqual(self.api.merged, conclusion == "success")
 
     def test_failed_or_interrupted_review_is_not_automatically_retried(self):
         with patch("controller.run_review", side_effect=RuntimeError):
@@ -346,7 +441,8 @@ class ControllerTests(unittest.TestCase):
                 self.api.checks = [review_check]
                 review_check["conclusion"] = conclusion
                 with patch(
-                    "controller.run_review", return_value=CLEAN
+                    "controller.run_review",
+                    return_value=with_input(self.api, CLEAN),
                 ) as model:
                     process(self.api, "pluto-core", 7)
                 model.assert_not_called()
@@ -356,7 +452,10 @@ class ControllerTests(unittest.TestCase):
     def test_explicit_retry_can_recover_failed_model_request(self):
         with patch("controller.run_review", side_effect=RuntimeError):
             process(self.api, "pluto-core", 7)
-        with patch("controller.run_review", return_value=CLEAN) as model:
+        with patch(
+            "controller.run_review",
+            return_value=with_input(self.api, CLEAN),
+        ) as model:
             process(self.api, "pluto-core", 7, fresh=True)
         model.assert_called_once()
         self.assertTrue(self.api.merged)
@@ -364,8 +463,11 @@ class ControllerTests(unittest.TestCase):
     def test_changed_revision_gets_one_new_review(self):
         self.api.runs_succeed = False
         self.run_gate()
-        self.api.pr["base"]["sha"] = "new-base"
-        with patch("controller.run_review", return_value=CLEAN) as model:
+        self.api.pr["base"]["sha"] = "c" * 40
+        with patch(
+            "controller.run_review",
+            return_value=with_input(self.api, CLEAN),
+        ) as model:
             process(self.api, "pluto-core", 7)
             process(self.api, "pluto-core", 7)
         model.assert_called_once()
@@ -381,12 +483,18 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(self.api.reviews[-1]["state"], "CHANGES_REQUESTED")
         self.assertFalse(self.api.merged)
         self.assertFalse(self.api.auto_enabled)
-        with patch("controller.run_review", return_value=CLEAN) as model:
+        with patch(
+            "controller.run_review",
+            return_value=with_input(self.api, CLEAN),
+        ) as model:
             process(self.api, "pluto-core", 7)
         model.assert_not_called()
         self.assertEqual(len(self.api.reviews), 1)
-        self.api.pr["head"]["sha"] = "fixed-head"
-        with patch("controller.run_review", return_value=CLEAN):
+        self.api.pr["head"]["sha"] = "e" * 40
+        with patch(
+            "controller.run_review",
+            return_value=with_input(self.api, CLEAN),
+        ):
             process(self.api, "pluto-core", 7)
         self.assertEqual(self.api.reviews[-1]["state"], "APPROVED")
         self.assertTrue(self.api.merged)
@@ -410,8 +518,8 @@ class ControllerTests(unittest.TestCase):
             "schema": CHECK_SCHEMA,
             "repository": "plutoframework/pluto-core",
             "number": 7,
-            "head": "head",
-            "base": "base",
+            "head": HEAD,
+            "base": BASE,
             "policy": "policy",
             "reviewer": "bot",
             "result": CLEAN,
