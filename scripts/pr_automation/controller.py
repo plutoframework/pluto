@@ -19,6 +19,7 @@ from policy import (
     review_value,
 )
 from review import run as run_review
+from review_diagnostics import selected_model
 
 
 def check(api, prefix, name, head, conclusion, summary, evidence=None):
@@ -80,6 +81,7 @@ def review_scope(pr):
         "head": pr["head"]["sha"],
         "base": pr["base"]["sha"],
         "policy": os.environ["POLICY_SHA"],
+        "model": selected_model(),
         "reviewer": os.environ["BOT_LOGIN"],
     }
 
@@ -226,7 +228,7 @@ def process(api, repository, number, fresh=False):
                 REVIEW_CHECK,
                 head,
                 "failure",
-                "Astra review failed or returned incomplete output. Retry the "
+                "Model review failed or returned incomplete output. Retry the "
                 "workflow; automatic merging remains blocked.",
                 scope,
             )
@@ -271,7 +273,7 @@ def process(api, repository, number, fresh=False):
             REVIEW_CHECK,
             head,
             "success",
-            "Astra review completed. The separate merge-policy check evaluates"
+            "Model review completed. The separate merge-policy check evaluates"
             " its findings.",
             evidence,
         )
@@ -309,7 +311,8 @@ def process(api, repository, number, fresh=False):
                 "event": "REQUEST_CHANGES",
                 "commit_id": head,
                 "body": (
-                    "Astra identified unresolved findings or security concerns"
+                    "The model identified unresolved findings or security "
+                    "concerns"
                     " for this commit. See the PR review feedback and Pluto "
                     "merge-policy check, then push fixes for a fresh review."
                 ),
@@ -341,7 +344,7 @@ def process(api, repository, number, fresh=False):
         GATE_CHECK,
         head,
         "success",
-        "Complete clean Astra review and current CI/security proofs passed; "
+        "Complete clean model review and current CI/security proofs passed; "
         "Steward may independently approve and merge.",
     )
     if steward_review_state(reviews, head) != "APPROVED":
@@ -351,7 +354,7 @@ def process(api, repository, number, fresh=False):
                 "event": "APPROVE",
                 "commit_id": head,
                 "body": (
-                    "Pluto policy passed for this commit: complete clean Astra"
+                    "Pluto policy passed for this commit: complete clean model"
                     " review and current CI/security checks."
                 ),
             },

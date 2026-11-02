@@ -38,6 +38,7 @@
         run: uv sync --frozen --extra github --no-dev
       - name: Review current PR and evaluate policy
         env:
+          PLUTO_REVIEW_MODEL: ${{ vars.PLUTO_REVIEW_MODEL }}
           GPUROUTER_API_KEY: ${{ secrets.GPUROUTER_API_KEY }}
           PR_REVIEWER__PUBLISH_ERROR_DETAILS: "true"
           CHECK_TOKEN: ${{ steps.app.outputs.token }}
