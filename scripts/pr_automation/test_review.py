@@ -23,7 +23,7 @@ class ReviewSettingsTests(unittest.TestCase):
         ):
             env = environment()
         self.assertEqual(env["OPENAI__API_BASE"], "https://gpurouter.io/v1")
-        self.assertEqual(env["CONFIG__MODEL"], "openai/openai/gpt-6-astra")
+        self.assertEqual(env["CONFIG__MODEL"], "openai/anthropic/claude-opus-5.5")
         self.assertEqual(env["CONFIG__MAX_MODEL_TOKENS"], "96000")
         self.assertLessEqual(
             int(env["CONFIG__MAX_MODEL_TOKENS"])

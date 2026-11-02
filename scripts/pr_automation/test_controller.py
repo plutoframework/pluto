@@ -413,6 +413,7 @@ class ControllerTests(unittest.TestCase):
             "head": "head",
             "base": "base",
             "policy": "policy",
+            "model": "openai/anthropic/claude-opus-5.5",
             "reviewer": "bot",
             "result": CLEAN,
         }
