@@ -59,8 +59,10 @@ class InputPlanTests(unittest.TestCase):
         ):
             self.assertEqual(main(), 0)
         self.assertIsNot(tools.PRReviewer, FakeReviewer)
-        self.assertEqual(tools.PRReviewer.__mro__[1].__name__,
-                         "DiagnosticReviewer")
+        self.assertEqual(
+            [kind.__name__ for kind in tools.PRReviewer.__mro__[:3]],
+            ["AttestedReviewer", "CompletedReviewer", "DiagnosticReviewer"],
+        )
         self.assertIs(agent.PRReviewer, tools.PRReviewer)
         for target in agent.command2class.values():
             self.assertIs(target, tools.PRReviewer)

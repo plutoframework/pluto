@@ -460,6 +460,8 @@ HISTORICAL_AUDIT_POLICIES = {
     "8974ec5e5b320880382b210e598fa140d3b200ad",
     # Protected diagnostic observer, merged by Steward in Pluto PR #8.
     "3bcec29cfb1985b5c90796088f1d9eee72e1c217",
+    # Protected streamed completion boundary, merged in Pluto PR #9.
+    "13fdc870afb19ea776e755833404f45fe2493cdf",
 }
 AUDIT_APP_ID = 5550724
 

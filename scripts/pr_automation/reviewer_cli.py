@@ -90,8 +90,9 @@ def main():
         os.environ["PLUTO_REVIEW_DIAGNOSTICS_REPORT"]
     ))
     observed = diagnostics.diagnostic_reviewer(reviewer.PRReviewer, recorder)
+    completed = diagnostics.completed_reviewer(observed)
     wrapped = attested_reviewer(
-        observed,
+        completed,
         inputs.attest_provider,
         path,
         reviewer._review_failure_comment,
