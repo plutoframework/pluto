@@ -18,12 +18,18 @@ def environment():
             "GITHUB__AGENT_LOGIN": os.environ["BOT_LOGIN"],
             "CONFIG__MODEL": "openai/openai/gpt-6-astra",
             "CONFIG__CUSTOM_MODEL_MAX_TOKENS": "128000",
+            "CONFIG__MAX_MODEL_TOKENS": "96000",
+            "BAD_EXTENSIONS__DEFAULT": "[]",
+            "CONFIG__USE_EXTRA_BAD_EXTENSIONS": "false",
+            "CONFIG__ENABLE_PER_DIRECTORY_SETTINGS": "false",
             "CONFIG__REASONING_EFFORT": "high",
             "CONFIG__AI_TIMEOUT": "600",
             "CONFIG__RETRY_SAME_MODEL_ON_TIMEOUT": "false",
-            # Leave prompt space within PR-Agent's 32k total token budget.
+            # Keep reply headroom within the explicit total-token budget.
             "CONFIG__MAX_OUTPUT_TOKENS": "16384",
-            "CONFIG__ADDITIONAL_REASONING_EFFORT_MODELS": '["openai/openai/gpt-6-astra"]',
+            "CONFIG__ADDITIONAL_REASONING_EFFORT_MODELS": (
+                '["openai/openai/gpt-6-astra"]'
+            ),
             "CONFIG__FALLBACK_MODELS": "[]",
             "IGNORE__GLOB": "[]",
             "IGNORE__REGEX": "[]",
@@ -104,31 +110,58 @@ def environment():
     return env
 
 
+class ReviewInputError(RuntimeError):
+    """Safe input-failure explanation for the protected check."""
+
+
+class ReviewExecutionError(RuntimeError):
+    """Only predefined, sanitized failure reasons cross this boundary."""
+
+
 def run(url, output):
     output = Path(output).resolve()
     output.unlink(missing_ok=True)
     source = Path(os.environ["PR_AGENT_SOURCE"]).resolve()
     command = [
-        str(source / ".venv/bin/pr-agent"),
+        str(source / ".venv/bin/python"),
+        "-I",
+        str(Path(__file__).with_name("reviewer_cli.py")),
         "--pr_url",
         url,
         "--json-output",
         str(output),
         "review",
     ]
+    input_report = output.with_suffix(".input.json")
+    input_report.unlink(missing_ok=True)
+    env = environment()
+    env["PLUTO_REVIEW_INPUT_REPORT"] = str(input_report)
     # PR-Agent errors can contain provider details. Keep raw subprocess logs out
     # of CI output; the controller publishes only sanitized failure messages.
     result = subprocess.run(
         command,
         cwd=source,
-        env=environment(),
+        env=env,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         timeout=900,
     )
-    if result.returncode or not output.is_file():
-        raise RuntimeError("PR-Agent did not produce a complete review")
-    return json.loads(output.read_text())
+    if not input_report.is_file():
+        raise ReviewInputError("The reviewer produced no verified input report")
+    report = json.loads(input_report.read_text())
+    if report.get("input_error"):
+        raise ReviewInputError(report["input_error"])
+    if result.returncode or report.get("errors") or not output.is_file():
+        reasons = report.get("errors", [])
+        reason = reasons[0] if reasons else "No complete review was produced"
+        raise ReviewExecutionError(reason)
+    data = json.loads(output.read_text())
+    if (not isinstance(data, dict)
+            or not isinstance(report.get("evidence"), dict)):
+        raise ReviewInputError("Malformed review or missing input evidence")
+    # Model output cannot supply or replace the independently verified evidence.
+    data["input_evidence"] = report["evidence"]
+    return data
 
 
 if __name__ == "__main__":
