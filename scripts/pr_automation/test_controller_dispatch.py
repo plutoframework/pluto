@@ -92,4 +92,3 @@ class ResolvedQueueTests(unittest.TestCase):
     def test_legacy_entrypoints_keep_their_protected_event_handling(self):
         with patch.dict(os.environ, {}, clear=True):
             self.assertIsNone(resolved_target("workflow_run", {}))
-

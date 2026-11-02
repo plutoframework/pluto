@@ -1,10 +1,12 @@
 """Pinned-reviewer diagnostics without content or exception messages."""
 
 import importlib
+import inspect
 import json
 import os
 from pathlib import Path
 import sys
+from types import FunctionType, MethodType
 
 STAGES = {"request", "response", "planning", "parse"}
 EVENTS = {"start", "ok", "error"}
@@ -189,14 +191,60 @@ def completed_reviewer(original):
             handler.chat_completion = completed
     return CompletedReviewer
 
+
+def single_attempt_reviewer(original):
+    """Bind the exact pinned SDK body without its two retry-decorator layers."""
+    class SingleAttemptReviewer(original):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            handler = self.ai_handler
+            method = getattr(handler, "_chat_completion_with_retry", None)
+            message = "Pinned single-attempt handler is incompatible"
+            if (not isinstance(method, MethodType)
+                    or method.__self__ is not handler):
+                raise RuntimeError(message)
+            outer = method.__func__
+            middle = getattr(outer, "__wrapped__", None)
+            body = getattr(middle, "__wrapped__", None)
+            expected = (
+                (outer, "async_wrapped", "/tenacity/_asyncio.py", True),
+                (middle, "wrapped_f", "/tenacity/__init__.py", False),
+                (body, "_chat_completion_with_retry",
+                 "/pr_agent/algo/ai_handlers/litellm_ai_handler.py", True),
+            )
+            for function, name, suffix, asynchronous in expected:
+                if (
+                    not isinstance(function, FunctionType)
+                    or function.__module__
+                    != "pr_agent.algo.ai_handlers.litellm_ai_handler"
+                    or function.__qualname__
+                    != "LiteLLMAIHandler._chat_completion_with_retry"
+                    or function.__code__.co_name != name
+                    or not function.__code__.co_filename.replace("\\", "/")
+                    .endswith(suffix)
+                    or inspect.iscoroutinefunction(function) != asynchronous
+                ):
+                    raise RuntimeError(message)
+            retry = getattr(outer, "retry", None)
+            if (
+                type(retry).__module__ != "tenacity._asyncio"
+                or type(retry).__name__ != "AsyncRetrying"
+                or getattr(middle, "retry", None) is not retry
+                or hasattr(body, "__wrapped__")
+                or inspect.unwrap(method) is not body
+            ):
+                raise RuntimeError(message)
+            handler._chat_completion_with_retry = MethodType(body, handler)
+    return SingleAttemptReviewer
+
 def main():
     if not sys.flags.isolated:
         raise RuntimeError("The diagnostic launcher requires isolated Python")
     recorder = Recorder(Path(os.environ["PLUTO_REVIEW_DIAGNOSTICS_REPORT"]))
     tools = importlib.import_module("pr_agent.tools.pr_reviewer")
-    wrapped = completed_reviewer(
+    wrapped = single_attempt_reviewer(completed_reviewer(
         diagnostic_reviewer(tools.PRReviewer, recorder)
-    )
+    ))
     tools.PRReviewer = wrapped
     agent = importlib.import_module("pr_agent.agent.pr_agent")
     agent.PRReviewer = wrapped

@@ -9,9 +9,12 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from test_review_diagnostics import bind_fake_retry_method
 
 from reviewer_cli import attested_reviewer, configure_snapshot_filter, main
-from review_diagnostics import Recorder, diagnostic_reviewer
+from review_diagnostics import (
+    Recorder, diagnostic_reviewer, completed_reviewer, single_attempt_reviewer,
+)
 
 
 class FakeReviewer:
@@ -60,8 +63,9 @@ class InputPlanTests(unittest.TestCase):
             self.assertEqual(main(), 0)
         self.assertIsNot(tools.PRReviewer, FakeReviewer)
         self.assertEqual(
-            [kind.__name__ for kind in tools.PRReviewer.__mro__[:3]],
-            ["AttestedReviewer", "CompletedReviewer", "DiagnosticReviewer"],
+            [kind.__name__ for kind in tools.PRReviewer.__mro__[:4]],
+            ["AttestedReviewer", "SingleAttemptReviewer", "CompletedReviewer",
+             "DiagnosticReviewer"],
         )
         self.assertIs(agent.PRReviewer, tools.PRReviewer)
         for target in agent.command2class.values():
@@ -71,7 +75,11 @@ class InputPlanTests(unittest.TestCase):
         class Completing(FakeReviewer):
             def __init__(self):
                 super().__init__()
-                self.ai_handler = SimpleNamespace(chat_completion=self.complete)
+                self.ai_handler = SimpleNamespace(
+                    chat_completion=self.complete,
+                    streaming_required_models=["openai/qwq-plus"],
+                )
+                bind_fake_retry_method(self.ai_handler)
             async def complete(self):
                 return "local result", "stop"
             async def _get_prediction(self, *_args, **_kwargs):
@@ -80,7 +88,9 @@ class InputPlanTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             recorder = Recorder(Path(directory) / "diagnostics.json")
             wrapped = attested_reviewer(
-                diagnostic_reviewer(Completing, recorder),
+                single_attempt_reviewer(completed_reviewer(
+                    diagnostic_reviewer(Completing, recorder)
+                )),
                 lambda _: {"evidence": {"complete": True}},
                 Path(directory) / "input.json", lambda _: "safe reason",
             )

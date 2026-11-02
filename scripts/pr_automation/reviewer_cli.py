@@ -91,8 +91,9 @@ def main():
     ))
     observed = diagnostics.diagnostic_reviewer(reviewer.PRReviewer, recorder)
     completed = diagnostics.completed_reviewer(observed)
+    single = diagnostics.single_attempt_reviewer(completed)
     wrapped = attested_reviewer(
-        completed,
+        single,
         inputs.attest_provider,
         path,
         reviewer._review_failure_comment,

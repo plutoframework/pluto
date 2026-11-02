@@ -7,6 +7,7 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
+from test_review_diagnostics import bind_fake_retry_method
 
 from review_diagnostics import (
     Recorder, STREAMING_REVIEW_MODEL, completed_reviewer, diagnostic_reviewer,
@@ -29,6 +30,7 @@ class FakeReviewer:
         self.ai_handler = SimpleNamespace(
             streaming_required_models=DEFAULTS, chat_completion=self.complete,
         )
+        bind_fake_retry_method(self.ai_handler)
 
     async def complete(self):
         if self.error is not None:
@@ -129,8 +131,10 @@ class CompletionTests(unittest.TestCase):
         ):
             self.assertEqual(main(), 0)
         self.assertEqual(tools.PRReviewer.__mro__[0].__name__,
-                         "CompletedReviewer")
+                         "SingleAttemptReviewer")
         self.assertEqual(tools.PRReviewer.__mro__[1].__name__,
+                         "CompletedReviewer")
+        self.assertEqual(tools.PRReviewer.__mro__[2].__name__,
                          "DiagnosticReviewer")
         for command in ("review", "review_pr", "auto_review", "answer"):
             self.assertIs(agent.command2class[command], tools.PRReviewer)

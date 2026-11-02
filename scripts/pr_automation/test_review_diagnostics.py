@@ -2,18 +2,21 @@
 
 import asyncio
 import contextlib
+import functools
 import io
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 from review import run
-from review_diagnostics import Recorder, diagnostic_reviewer, main, safe_report
+from review_diagnostics import (
+    Recorder, diagnostic_reviewer, main, safe_report, single_attempt_reviewer,
+)
 
 SECRET = "credential-and-private-response"
 
@@ -27,6 +30,142 @@ class MemoryReport:
 
     def read_text(self):
         return self.text
+
+
+def bind_fake_retry_method(handler):
+    """Model the locked two-layer decorator shape using only the stdlib."""
+    async def _chat_completion_with_retry(self, *args, **kwargs):
+        return await self.transport(*args, **kwargs)
+    body = _chat_completion_with_retry
+    body.__module__ = "pr_agent.algo.ai_handlers.litellm_ai_handler"
+    body.__qualname__ = "LiteLLMAIHandler._chat_completion_with_retry"
+    body.__code__ = body.__code__.replace(co_filename=(
+        "/fixture/pr_agent/algo/ai_handlers/litellm_ai_handler.py"
+    ))
+    @functools.wraps(body)
+    def wrapped_f(self, *args, **kwargs):
+        async def retry():
+            try:
+                return await body(self, *args, **kwargs)
+            except Exception as error:
+                if getattr(error, "has_headers", False) or isinstance(
+                    error, TimeoutError
+                ):
+                    raise
+                return await body(self, *args, **kwargs)
+        return retry()
+    wrapped_f.__code__ = wrapped_f.__code__.replace(
+        co_filename="/fixture/tenacity/__init__.py"
+    )
+    retry_type = type("AsyncRetrying", (), {"__module__": "tenacity._asyncio"})
+    wrapped_f.retry = retry_type()
+    @functools.wraps(wrapped_f)
+    async def async_wrapped(self, *args, **kwargs):
+        return await wrapped_f(self, *args, **kwargs)
+    async_wrapped.__code__ = async_wrapped.__code__.replace(
+        co_filename="/fixture/tenacity/_asyncio.py"
+    )
+    handler._chat_completion_with_retry = MethodType(async_wrapped, handler)
+    return handler
+
+
+class RetryReviewer:
+    def __init__(self):
+        self.calls = []
+        self.failure = None
+        handler = SimpleNamespace(deployment_id="unchanged")
+        async def transport(**kwargs):
+            self.calls.append(kwargs)
+            if self.failure is not None:
+                raise self.failure
+            return "unchanged result", "stop"
+        handler.transport = transport
+        bind_fake_retry_method(handler)
+        async def chat(**kwargs):
+            return await handler._chat_completion_with_retry(**kwargs)
+        handler.chat_completion = chat
+        self.ai_handler = handler
+
+    async def predict(self):
+        return await self.ai_handler.chat_completion(
+            model="openai/openai/gpt-6-astra", reasoning_effort="high",
+            max_completion_tokens=16384,
+        )
+
+
+class SingleAttemptTests(unittest.TestCase):
+    def test_one_body_invocation_for_502_headers_timeout_and_success(self):
+        for kind in ("502_no_headers", "502_headers", "timeout", "success"):
+            reviewer = single_attempt_reviewer(RetryReviewer)()
+            if kind.startswith("502"):
+                failure = BadRequestError("synthetic transport failure")
+                failure.status_code = 502
+                failure.has_headers = kind == "502_headers"
+            elif kind == "timeout":
+                failure = TimeoutError("synthetic timeout")
+            else:
+                failure = None
+            reviewer.failure = failure
+            with self.subTest(kind=kind):
+                if failure is None:
+                    self.assertEqual(asyncio.run(reviewer.predict()),
+                                     ("unchanged result", "stop"))
+                else:
+                    with self.assertRaises(type(failure)) as caught:
+                        asyncio.run(reviewer.predict())
+                    self.assertIs(caught.exception, failure)
+                self.assertEqual(len(reviewer.calls), 1)
+                self.assertEqual(reviewer.calls[0], {
+                    "model": "openai/openai/gpt-6-astra",
+                    "reasoning_effort": "high", "max_completion_tokens": 16384,
+                })
+                self.assertEqual(reviewer.ai_handler.deployment_id, "unchanged")
+
+    def test_full_binding_leaves_wrappers_intact_and_one_unwrap_retries(self):
+        baseline = RetryReviewer()
+        method = baseline.ai_handler._chat_completion_with_retry
+        baseline.ai_handler._chat_completion_with_retry = MethodType(
+            method.__wrapped__, baseline.ai_handler
+        )
+        baseline.failure = RuntimeError("synthetic failure")
+        with self.assertRaises(RuntimeError):
+            asyncio.run(baseline.predict())
+        self.assertEqual(len(baseline.calls), 2)
+        original = RetryReviewer()
+        outer = original.ai_handler._chat_completion_with_retry.__func__
+        middle = outer.__wrapped__
+        body = middle.__wrapped__
+        class Existing:
+            def __init__(self):
+                self.ai_handler = original.ai_handler
+        wrapped = single_attempt_reviewer(Existing)()
+        self.assertIs(wrapped.ai_handler._chat_completion_with_retry.__func__,
+                      body)
+        self.assertIs(outer.__wrapped__, middle)
+        self.assertIs(middle.__wrapped__, body)
+
+    def test_incompatible_retry_shapes_fail_before_any_transport(self):
+        for kind in ("missing", "one_layer", "extra_layer", "wrong_body"):
+            original = RetryReviewer()
+            handler = original.ai_handler
+            outer = handler._chat_completion_with_retry.__func__
+            if kind == "missing":
+                del handler._chat_completion_with_retry
+            elif kind == "one_layer":
+                outer.__wrapped__ = outer.__wrapped__.__wrapped__
+            elif kind == "extra_layer":
+                outer.__wrapped__.__wrapped__.__wrapped__ = lambda: None
+            else:
+                body = outer.__wrapped__.__wrapped__
+                body.__code__ = body.__code__.replace(co_filename="/wrong.py")
+            class Existing:
+                def __init__(self):
+                    self.ai_handler = handler
+            with self.subTest(kind=kind), self.assertRaisesRegex(
+                RuntimeError, "Pinned single-attempt handler is incompatible"
+            ):
+                single_attempt_reviewer(Existing)()
+            self.assertEqual(original.calls, [])
 
 
 class BadRequestError(RuntimeError):
