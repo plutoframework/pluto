@@ -159,12 +159,44 @@ def diagnostic_reviewer(original, recorder):
     return DiagnosticReviewer
 
 
+
+STREAMING_REVIEW_MODEL = "openai/openai/gpt-6-astra"
+
+
+def completed_reviewer(original):
+    """Use the pinned streaming transport and reject unfinished completions."""
+    class CompletedReviewer(original):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            handler = self.ai_handler
+            models = getattr(handler, "streaming_required_models", None)
+            if (type(models) is not list
+                    or any(type(m) is not str for m in models)):
+                raise RuntimeError("Pinned streaming handler is incompatible")
+            selected = models.copy()
+            if STREAMING_REVIEW_MODEL not in selected:
+                selected.append(STREAMING_REVIEW_MODEL)
+            handler.streaming_required_models = selected
+            completion = handler.chat_completion
+            async def completed(*args, **kwargs):
+                result = await completion(*args, **kwargs)
+                _, finish_reason = result
+                if type(finish_reason) is not str or finish_reason != "stop":
+                    raise ValueError(
+                        "Model completion did not finish with stop"
+                    )
+                return result
+            handler.chat_completion = completed
+    return CompletedReviewer
+
 def main():
     if not sys.flags.isolated:
         raise RuntimeError("The diagnostic launcher requires isolated Python")
     recorder = Recorder(Path(os.environ["PLUTO_REVIEW_DIAGNOSTICS_REPORT"]))
     tools = importlib.import_module("pr_agent.tools.pr_reviewer")
-    wrapped = diagnostic_reviewer(tools.PRReviewer, recorder)
+    wrapped = completed_reviewer(
+        diagnostic_reviewer(tools.PRReviewer, recorder)
+    )
     tools.PRReviewer = wrapped
     agent = importlib.import_module("pr_agent.agent.pr_agent")
     agent.PRReviewer = wrapped
