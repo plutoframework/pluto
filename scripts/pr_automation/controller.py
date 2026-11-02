@@ -458,6 +458,8 @@ HISTORICAL_AUDIT_POLICIES = {
     HISTORICAL_AUDIT_POLICY,
     # Protected budget-only bootstrap, merged by Steward in Pluto PR #7.
     "8974ec5e5b320880382b210e598fa140d3b200ad",
+    # Protected diagnostic observer, merged by Steward in Pluto PR #8.
+    "3bcec29cfb1985b5c90796088f1d9eee72e1c217",
 }
 AUDIT_APP_ID = 5550724
 
